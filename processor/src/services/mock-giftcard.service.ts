@@ -115,10 +115,17 @@ export class MockGiftCardService extends AbstractGiftCardService {
   }
 
   /**
-   * The widget's `code` field is not an identity input, so its value is ignored on purpose: the
-   * loyalty account is the cart customer and the currency comes from the cart.
+   * The widget's `code` field is not an identity input: the loyalty account is the cart customer
+   * and the currency comes from the cart. It does carry one instruction, though - an amount, in the
+   * `Valid-<centAmount>-<CURRENCY>` shape the checkout's own sample codes use - and that is the only
+   * say anyone gets in how much goes.
+   *
+   * The checkout SDK spends min(reported balance, cart total) and hands redeem an amount derived
+   * from this number, so reporting the whole balance means every checkout drains what it can.
+   * Reporting less is how a shopper keeps the rest. A code naming no amount, or one in another
+   * currency, is not an instruction and leaves the full balance on offer.
    */
-  async balance(_code: string): Promise<BalanceResponseSchemaDTO> {
+  async balance(code: string): Promise<BalanceResponseSchemaDTO> {
     const ctCart = await this.ctCartService.getCart({
       id: getCartIdFromContext(),
     });
@@ -131,10 +138,36 @@ export class MockGiftCardService extends AbstractGiftCardService {
         currencyCode: amountPlanned.currencyCode,
       });
 
-      return this.balanceConverter.convert(balanceResult);
+      const balance = this.balanceConverter.convert(balanceResult);
+      return this.capToRequestedAmount(balance, code, amountPlanned.currencyCode);
     } catch (e) {
       throw this.toConnectorError(e);
     }
+  }
+
+  /**
+   * Lowers the reported balance to what the code asks for. Never raises it: the shopper cannot
+   * spend points they do not have, whatever the code says.
+   */
+  private capToRequestedAmount(
+    balance: BalanceResponseSchemaDTO,
+    code: string,
+    cartCurrency: string,
+  ): BalanceResponseSchemaDTO {
+    const requested = MockGiftCardService.parseRequestedAmount(code, cartCurrency);
+    if (requested === null || !balance.amount || requested >= balance.amount.centAmount) {
+      return balance;
+    }
+    return { ...balance, amount: { ...balance.amount, centAmount: requested } };
+  }
+
+  /** Returns the cent amount the code names in the cart's currency, or null if it names none. */
+  private static parseRequestedAmount(code: string, cartCurrency: string): number | null {
+    const match = /^valid-(\d+)-([a-z]{3})$/i.exec(code.trim());
+    if (!match || match[2].toUpperCase() !== cartCurrency.toUpperCase()) {
+      return null;
+    }
+    return Number(match[1]);
   }
 
   /**

@@ -160,6 +160,39 @@ describe('mock-giftcard.service', () => {
       });
     });
 
+    // The checkout SDK spends min(reported balance, cart total), so reporting the whole balance is
+    // what makes every checkout spend everything the shopper has. Capping the report is the only
+    // lever the connector has over how much goes: there is no amount input anywhere in the flow,
+    // and redeem is handed an amount the SDK derived from this very number.
+    test.each([
+      ['Valid-1000-EUR', 1000, 'caps the report at the amount the code asks for'],
+      ['valid-1000-eur', 1000, 'reads the amount regardless of case'],
+      ['Valid-9900-EUR', 2600, 'never reports more than the shopper actually has'],
+      ['Valid-1000-USD', 2600, 'ignores an amount denominated in another currency'],
+      ['gift-card-please', 2600, 'ignores a code carrying no amount at all'],
+    ])('%s -> %d cents: %s', async (code, expectedCents) => {
+      setupLoyaltyConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+          HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 2600,
+            amount: { centAmount: 2600, currencyCode: 'EUR' },
+          }),
+        ),
+      );
+
+      const result = await mockGiftCardService.balance(code);
+
+      expect(result).toStrictEqual({
+        status: { state: 'Valid' },
+        amount: { centAmount: expectedCents, currencyCode: 'EUR' },
+      });
+    });
+
     test('throws CurrencyNotMatch when the backend rejects the cart currency', async () => {
       setupLoyaltyConfig();
       jest

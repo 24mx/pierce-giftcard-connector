@@ -91,7 +91,7 @@ export class FormComponent extends DefaultComponent {
         code: giftCardCode,
       };
       const requestRedeemURL = this.baseOptions.processorUrl.endsWith('/')
-        ? `${this.baseOptions.processorUrl}redeem}`
+        ? `${this.baseOptions.processorUrl}redeem`
         : `${this.baseOptions.processorUrl}/redeem`;
 
       const response = await fetch(requestRedeemURL, {
