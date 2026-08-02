@@ -1,4 +1,11 @@
 # connect-giftcard-integration-template
+
+> **Pierce fork.** Mirror of the upstream template at tag `v0.4.0`, adapted so that the "gift card"
+> is a customer's loyalty point balance: points are held when the shopper redeems them and debited
+> by the loyalty backend once an order exists, so nothing this connector does needs compensating.
+> Upstream: `commercetools/connect-giftcard-integration-template` (remote `upstream`).
+> Everything below this note is upstream documentation.
+
 This repository provides a [connect](https://docs.commercetools.com/connect) template for giftcard integration connector. This boilerplate code acts as a starting point for integration with external giftcard service provider.
 
 ## Template Features
@@ -94,6 +101,13 @@ deployAs:
           description: JWT Issuer for jwt validation (example - https://mc-api.europe-west1.gcp.commercetools.com)
           required: true
           default: https://mc-api.europe-west1.gcp.commercetools.com
+        - key: LOYALTY_API_URL
+          description: Base URL of the Pierce loyalty backend, owner of the points ledger
+          required: true
+        - key: LOYALTY_TIMEOUT_MS
+          description: Timeout for calls to the loyalty backend, kept well under the widget's patience
+          required: false
+          default: "5000"
       securedConfiguration:
         - key: CTP_CLIENT_SECRET
           description: commercetools client secret
@@ -110,7 +124,8 @@ Here you can see the details about various variables in configuration
 - `CTP_SESSION_URL`: The URL for session creation in commercetools platform. Connectors relies on the session created to be able to share information between enabler and processor. The default value is `https://session.europe-west1.gcp.commercetools.com`.
 - `CTP_JWKS_URL`: The URL which provides JSON Web Key Set. Default value is `https://mc-api.europe-west1.gcp.commercetools.com/.well-known/jwks.json`
 - `CTP_JWT_ISSUER`: The issuer inside JSON Web Token which is required in JWT validation process. Default value is `https://mc-api.europe-west1.gcp.commercetools.com`
-- `MOCK_CONNECTOR_CURRENCY`: The currency code assigned to the deployment of this connector template. Remind that each deployment supports single currency.
+- `LOYALTY_API_URL`: The base URL of the Pierce loyalty backend, which owns the points ledger. The connector is only an HTTP client of it.
+- `LOYALTY_TIMEOUT_MS`: Timeout for calls to the loyalty backend, in milliseconds. Keep it well under the checkout widget's patience. Default value is `5000`.
 
 ## Development
 

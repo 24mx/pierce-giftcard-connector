@@ -32,10 +32,17 @@ deployAs:
           description: JWT Issuer for jwt validation (example - https://mc-api.europe-west1.gcp.commercetools.com)
           required: true
           default: https://mc-api.europe-west1.gcp.commercetools.com   
-        - key: MOCK_CONNECTOR_CURRENCY
-          description: Currency Code assigned to a single deployment of this connector template
+        - key: LOYALTY_API_URL
+          description: Base URL of the Pierce loyalty backend, owner of the points ledger
           required: true
+        - key: LOYALTY_TIMEOUT_MS
+          description: Timeout for calls to the loyalty backend, kept well under the widget's patience
+          required: false
+          default: "5000"
       securedConfiguration:
         - key: CTP_CLIENT_SECRET
           description: commercetools client secret
+          required: true
+        - key: LOYALTY_API_KEY
+          description: Shared secret sent as the X-Api-Key header on every call to the loyalty backend
           required: true

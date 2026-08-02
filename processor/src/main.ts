@@ -1,6 +1,7 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+import { config } from './config/config';
 import { setupFastify } from './server/server';
 
 (async () => {
@@ -9,7 +10,7 @@ import { setupFastify } from './server/server';
   const HOST = '0.0.0.0';
   try {
     await server.listen({
-      port: 8080,
+      port: config.port,
       host: HOST,
     });
   } catch (err) {

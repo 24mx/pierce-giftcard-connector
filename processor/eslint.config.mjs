@@ -73,4 +73,14 @@ export default [
       ],
     },
   },
+  {
+    // The block above only matches top-level `*.ts`, so nested sources fall back to the recommended
+    // rule set, which flags every unused argument. Some are mandated by an interface we implement
+    // (e.g. the gift card `code`, which is not an identity input for loyalty points), so honour the
+    // usual underscore-prefix opt-out across the whole tree.
+    files: ['**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+    },
+  },
 ];

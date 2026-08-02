@@ -11,7 +11,14 @@ export const config = {
   checkoutUrl: process.env.CTP_CHECKOUT_URL || 'https://checkout.europe-west1.gcp.commercetools.com',
   healthCheckTimeout: parseInt(process.env.HEALTH_CHECK_TIMEOUT || '5000'),
 
-  mockConnectorCurrency: process.env.MOCK_CONNECTOR_CURRENCY || '',
+  // Connect deploys the processor on 8080; override it locally when something else holds that port
+  port: parseInt(process.env.PORT || '8080'),
+
+  // Pierce loyalty backend, the owner of the points ledger
+  loyaltyApiUrl: process.env.LOYALTY_API_URL || '',
+  loyaltyTimeoutMs: parseInt(process.env.LOYALTY_TIMEOUT_MS || '5000'),
+  // Shared secret for /loyalty/**. Empty means the backend is unsecured - fine on a laptop only.
+  loyaltyApiKey: process.env.LOYALTY_API_KEY || '',
 
   // Required by logger
   loggerLevel: process.env.LOGGER_LEVEL || 'info',

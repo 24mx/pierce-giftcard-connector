@@ -1,4 +1,6 @@
 import {
+  Cart,
+  Payment,
   CommercetoolsCartService,
   CommercetoolsPaymentService,
   healthCheckCommercetoolsPermissions,
@@ -14,18 +16,13 @@ import {
   RefundPaymentRequest,
   ReversePaymentRequest,
 } from './types/operation.type';
-import { PaymentModificationStatus } from '../dtos/operations/payment-intents.dto';
+import { AmountSchemaDTO, PaymentModificationStatus } from '../dtos/operations/payment-intents.dto';
 import { RedeemRequestDTO } from '../dtos/mock-giftcards.dto';
 import { getConfig } from '../config/config';
 import { appLogger, paymentSDK } from '../payment-sdk';
 import { AbstractGiftCardService } from './abstract-giftcard.service';
-import { MockAPI } from '../clients/mock-giftcard.client';
-import {
-  MockClientBalanceResponse,
-  MockClientRedeemRequest,
-  MockClientRedeemResponse,
-  GiftCardCodeType,
-} from '../clients/types/mock-giftcard.client.type';
+import { LoyaltyAPI } from '../clients/loyalty.client';
+import { LoyaltyApiError } from '../errors/loyalty-api.error';
 import { getCartIdFromContext, getPaymentInterfaceFromContext } from '../libs/fastify/context/context';
 import { BalanceResponseSchemaDTO, RedeemResponseDTO } from '../dtos/mock-giftcards.dto';
 import { MockCustomError } from '../errors/mock-api.error';
@@ -36,7 +33,12 @@ import packageJSON from '../../package.json';
 import { log } from '../libs/logger';
 
 /**
- * MockGiftCardService acts as a sample service class to integrate with commercetools composable platform and external gift card service provider. Since no actual communication with external gift card service provider in this connector template, further customization is required if SDK APIs are provided by gift card service provider.
+ * Integrates commercetools with the Pierce loyalty backend, whose "gift card" is the customer's
+ * loyalty point balance.
+ *
+ * Points are held at redeem and debited by the backend itself once an order exists, so nothing this
+ * service does ever has to be compensated: an abandoned checkout requires no call at all. Capture is
+ * deliberately absent - the loyalty backend drives it off the order signal.
  */
 export type MockGiftCardServiceOptions = {
   ctCartService: CommercetoolsCartService;
@@ -58,10 +60,7 @@ export class MockGiftCardService extends AbstractGiftCardService {
   /**
    * Get status
    *
-   * @remarks
-   * Implementation to provide mocking status of external systems
-   *
-   * @returns Promise with mocking data containing a list of status from different external systems
+   * @returns Promise containing the status of the systems this connector depends on
    */
   async status(): Promise<StatusResponse> {
     const handler = await statusHandler({
@@ -80,27 +79,30 @@ export class MockGiftCardService extends AbstractGiftCardService {
           ctAuthorizationService: paymentSDK.ctAuthorizationService,
           projectKey: getConfig().projectKey,
         }),
+        // The loyalty backend exposes no health endpoint yet, so this only asserts that the
+        // connector knows where to reach it. Upgrade to a real probe once one exists.
         async () => {
-          try {
-            const healthcheckResult = await MockAPI().healthcheck();
+          const loyaltyApiUrl = getConfig().loyaltyApiUrl;
+
+          if (!loyaltyApiUrl) {
             return {
-              name: 'mock giftcard API call',
-              status: 'UP',
-              details: {
-                healthcheckResult,
-              },
-            };
-          } catch (e) {
-            return {
-              name: 'mock giftcard API call',
+              name: 'Loyalty API configuration',
               status: 'DOWN',
-              message: `Not able to communicate with giftcard service provider API`,
-              details: {
-                // TODO do not expose the error
-                error: e,
-              },
+              message: 'LOYALTY_API_URL is not configured, the connector cannot reach the points ledger',
+              details: {},
             };
           }
+
+          return {
+            name: 'Loyalty API configuration',
+            status: 'UP',
+            details: {
+              loyaltyApiUrl,
+              // Surfaces an unsecured link rather than letting it pass unnoticed. Acceptable
+              // against a backend on the same laptop, nowhere else.
+              authenticated: Boolean(getConfig().loyaltyApiKey),
+            },
+          };
         },
       ],
       metadataFn: async () => ({
@@ -112,53 +114,46 @@ export class MockGiftCardService extends AbstractGiftCardService {
     return handler.body;
   }
 
-  async balance(code: string): Promise<BalanceResponseSchemaDTO> {
+  /**
+   * The widget's `code` field is not an identity input, so its value is ignored on purpose: the
+   * loyalty account is the cart customer and the currency comes from the cart.
+   */
+  async balance(_code: string): Promise<BalanceResponseSchemaDTO> {
     const ctCart = await this.ctCartService.getCart({
       id: getCartIdFromContext(),
     });
     const amountPlanned = await this.ctCartService.getPaymentAmount({ cart: ctCart });
+    const userId = this.getLoyaltyUserId(ctCart);
 
-    if (getConfig().mockConnectorCurrency !== amountPlanned.currencyCode) {
-      throw new MockCustomError({
-        message: 'cart and gift card currency do not match',
-        code: 400,
-        key: 'CurrencyNotMatch',
+    try {
+      const balanceResult = await LoyaltyAPI().balance({
+        userId,
+        currencyCode: amountPlanned.currencyCode,
       });
+
+      return this.balanceConverter.convert(balanceResult);
+    } catch (e) {
+      throw this.toConnectorError(e);
     }
-
-    const getBalanceResult: MockClientBalanceResponse = await MockAPI().balance(code);
-
-    return this.balanceConverter.convert(getBalanceResult);
   }
 
+  /**
+   * Order matters: the Payment is created and attached, the points are held, and only then is the
+   * transaction written. A hold whose transaction never got written is harmless - a payment with no
+   * Charge does not count towards cart coverage, and the hold ages out. The reverse order is not:
+   * it is coverage the ledger never recorded.
+   */
   async redeem(opts: { data: RedeemRequestDTO }): Promise<RedeemResponseDTO> {
-    const redeemCode = opts.data.code;
-    if (redeemCode && redeemCode.startsWith('Valid-00')) {
-      throw new MockCustomError({
-        message: 'The gift card is expired.',
-        code: 400,
-        key: GiftCardCodeType.EXPIRED,
-      });
-    }
     const ctCart = await this.ctCartService.getCart({
       id: getCartIdFromContext(),
     });
-
-    const amountPlanned = await this.ctCartService.getPaymentAmount({ cart: ctCart });
+    const userId = this.getLoyaltyUserId(ctCart);
     const redeemAmount = opts.data.redeemAmount;
-
-    if (getConfig().mockConnectorCurrency !== amountPlanned.currencyCode) {
-      throw new MockCustomError({
-        message: 'cart and gift card currency do not match',
-        code: 400,
-        key: GiftCardCodeType.CURRENCY_NOT_MATCH,
-      });
-    }
 
     const ctPayment = await this.ctPaymentService.createPayment({
       amountPlanned: redeemAmount,
       paymentMethodInfo: {
-        paymentInterface: getPaymentInterfaceFromContext() || 'mock-giftcard-provider',
+        paymentInterface: getPaymentInterfaceFromContext() || 'pierce-loyalty-giftcard',
         method: 'giftcard',
       },
       ...(ctCart.customerId && {
@@ -181,34 +176,35 @@ export class MockGiftCardService extends AbstractGiftCardService {
       paymentId: ctPayment.id,
     });
 
-    const request: MockClientRedeemRequest = {
-      code: redeemCode,
-      amount: redeemAmount,
-    };
+    try {
+      await LoyaltyAPI().hold({
+        userId,
+        paymentId: ctPayment.id,
+        cartId: ctCart.id,
+        amount: redeemAmount,
+      });
+    } catch (e) {
+      // Includes an uncertain hold (timeout, 5xx): leaving the payment transaction-less is the only
+      // outcome we can recover from, so never write the transaction here.
+      throw this.toConnectorError(e);
+    }
 
-    const response: MockClientRedeemResponse = await MockAPI().redeem(request);
-
-    const updatedPayment = await this.ctPaymentService.updatePayment({
+    await this.ctPaymentService.updatePayment({
       id: ctPayment.id,
-      pspReference: response.redemptionReference,
       transaction: {
         type: 'Charge',
         amount: ctPayment.amountPlanned,
-        interactionId: response.redemptionReference,
-        state: this.redemptionConverter.convertMockClientResultCode(response.resultCode),
+        state: 'Success',
       },
     });
-    return this.redemptionConverter.convert({ redemptionResult: response, createPaymentResult: updatedPayment });
+
+    return this.redemptionConverter.convert({ payment: ctPayment });
   }
 
   /**
-   * Capture payment
-   *
-   * @remarks
-   * Implementation to provide the mocking data for payment capture in external PSPs
-   *
-   * @param request - contains the amount and {@link https://docs.commercetools.com/api/projects/payments | Payment } defined in composable commerce
-   * @returns Promise with mocking data containing operation status and PSP reference
+   * Nothing to capture in phase 1: the Charge is written at redeem, and the loyalty backend books
+   * the debit itself from the order signal. A call arriving here means something is wired up that
+   * should not be, so it stays an alarm rather than a silent no-op.
    */
   async capturePayment(request: CapturePaymentRequest): Promise<PaymentProviderModificationResponse> {
     throw new ErrorGeneral('operation not supported', {
@@ -220,100 +216,128 @@ export class MockGiftCardService extends AbstractGiftCardService {
   }
 
   /**
-   * Cancel payment
-   *
-   * @remarks
-   * Implementation to provide the mocking data for payment cancel in external PSPs
-   *
-   * @param request - contains {@link https://docs.commercetools.com/api/projects/payments | Payment } defined in composable commerce
-   * @returns Promise with mocking data containing operation status and PSP reference
+   * The customer removed the points from the cart. Reverting the coverage is what matters; closing
+   * the hold is what saves them from waiting out the TTL to see their points again.
    */
   async cancelPayment(request: CancelPaymentRequest): Promise<PaymentProviderModificationResponse> {
-    throw new ErrorGeneral('operation not supported', {
-      fields: {
-        pspReference: request.payment.interfaceId,
-      },
-      privateMessage: "connector doesn't support cancel operation",
+    return this.revertCoverageAndCloseHold({
+      payment: request.payment,
+      amount: request.payment.amountPlanned,
+      action: 'cancelPayment',
     });
   }
 
   async refundPayment(request: RefundPaymentRequest): Promise<PaymentProviderModificationResponse> {
-    log.info(`Processing payment modification.`, {
-      paymentId: request.payment.id,
-      action: 'refundPayment',
-    });
-
-    const response = await this.handleRefunds({
-      amount: request.amount,
-      merchantReference: request.merchantReference,
+    return this.revertCoverageAndCloseHold({
       payment: request.payment,
-    });
-
-    log.info(`Payment modification completed.`, {
-      paymentId: request.payment.id,
+      amount: request.amount,
       action: 'refundPayment',
-      result: response.outcome,
     });
-
-    return response;
   }
 
   /**
-   * Reverse payment
-   *
-   * @remarks
-   * Abstract method to execute payment reversals in support of automated reversals to be triggered by checkout api. The actual invocation to PSPs should be implemented in subclasses
-   *
-   * @param request
-   * @returns Promise with outcome containing operation status and PSP reference
+   * Reachable through `automatedReversalConfiguration` when order creation fails. Nothing was
+   * debited, so this releases a hold rather than crediting points back.
    */
   async reversePayment(request: ReversePaymentRequest): Promise<PaymentProviderModificationResponse> {
-    log.info(`Processing payment modification.`, {
-      paymentId: request.payment.id,
-      action: 'reversePayment',
-    });
-
-    const response = await this.handleRefunds({
-      amount: request.payment.amountPlanned,
-      merchantReference: request.merchantReference,
+    return this.revertCoverageAndCloseHold({
       payment: request.payment,
-    });
-
-    log.info(`Payment modification completed.`, {
-      paymentId: request.payment.id,
+      amount: request.payment.amountPlanned,
       action: 'reversePayment',
-      result: response.outcome,
     });
-
-    return response;
   }
 
-  private async handleRefunds(request: RefundPaymentRequest): Promise<PaymentProviderModificationResponse> {
+  /** The loyalty userId is the cart's customer email, lowercased. */
+  private getLoyaltyUserId(cart: Cart): string {
+    const customerEmail = cart.customerEmail?.trim().toLowerCase();
+
+    if (!customerEmail) {
+      throw new MockCustomError({
+        message: 'the cart has no customer email, loyalty points cannot be identified',
+        code: 400,
+        key: 'CustomerNotIdentified',
+      });
+    }
+
+    return customerEmail;
+  }
+
+  /**
+   * Maps a loyalty backend failure onto the error taxonomy the widget understands.
+   * Anything that is not a backend rejection is a service
+   * failure: the caller must fail the operation rather than assume anything about the ledger.
+   */
+  private toConnectorError(e: unknown): Error {
+    if (!(e instanceof LoyaltyApiError)) {
+      return e instanceof Error ? e : new Error(String(e));
+    }
+
+    switch (e.status) {
+      case 400:
+        return new MockCustomError({
+          message: 'cart and gift card currency do not match',
+          code: 400,
+          key: 'CurrencyNotMatch',
+        });
+      case 409:
+        return new MockCustomError({
+          message: 'not enough loyalty points to cover the requested amount',
+          code: 409,
+          key: 'InsufficientFunds',
+        });
+      default:
+        return new MockCustomError({
+          message: 'the loyalty service is currently not available',
+          code: 500,
+          key: 'GenericError',
+        });
+    }
+  }
+
+  /**
+   * Reverting the coverage comes first: a Refund in state Success makes the SDK count the whole
+   * payment as 0 towards the cart, which is the outcome the customer asked for. Closing the hold is
+   * a courtesy on top - it is not a ledger operation, and a hold ages out on its own - so a failure
+   * there is logged and the operation still reports success.
+   */
+  private async revertCoverageAndCloseHold(opts: {
+    payment: Payment;
+    amount: AmountSchemaDTO;
+    action: string;
+  }): Promise<PaymentProviderModificationResponse> {
+    log.info(`Processing payment modification.`, {
+      paymentId: opts.payment.id,
+      action: opts.action,
+    });
+
     await this.ctPaymentService.updatePayment({
-      id: request.payment.id,
+      id: opts.payment.id,
       transaction: {
         type: 'Refund',
-        amount: request.amount,
-        state: 'Initial',
+        amount: opts.amount,
+        state: 'Success',
       },
     });
 
-    const rollbackResult = await MockAPI().rollback(request.payment.interfaceId || '');
+    try {
+      await LoyaltyAPI().voidHold({ paymentId: opts.payment.id });
+    } catch (e) {
+      log.warn(`Could not close the loyalty hold, it will age out at its TTL.`, {
+        paymentId: opts.payment.id,
+        action: opts.action,
+        error: e instanceof LoyaltyApiError ? e.message : String(e),
+      });
+    }
 
-    await this.ctPaymentService.updatePayment({
-      id: request.payment.id,
-      transaction: {
-        type: 'Refund',
-        amount: request.amount,
-        interactionId: rollbackResult.id,
-        state: rollbackResult.result ? 'Success' : 'Failure',
-      },
+    log.info(`Payment modification completed.`, {
+      paymentId: opts.payment.id,
+      action: opts.action,
+      result: PaymentModificationStatus.APPROVED,
     });
 
     return {
-      outcome:
-        rollbackResult.result === 'SUCCESS' ? PaymentModificationStatus.APPROVED : PaymentModificationStatus.REJECTED,
-      pspReference: rollbackResult?.id || '',
+      outcome: PaymentModificationStatus.APPROVED,
+      pspReference: opts.payment.id,
     };
   }
 }

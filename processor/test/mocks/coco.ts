@@ -1,7 +1,7 @@
 import { Cart, Payment } from '@commercetools/connect-payments-sdk';
 import { randomUUID } from 'crypto';
 
-export const getCartOK = () => {
+export const getCartOK = (overrides: Partial<Cart> = {}) => {
   const cartId = randomUUID();
   const mockGetCartResult: Cart = {
     id: cartId,
@@ -48,8 +48,20 @@ export const getCartOK = () => {
     createdAt: '2024-01-01T00:00:00Z',
     lastModifiedAt: '2024-01-01T00:00:00Z',
   };
-  return mockGetCartResult;
+  return { ...mockGetCartResult, ...overrides };
 };
+
+/** Cart of an identified customer, in the currency the loyalty backend supports. */
+export const getCartWithCustomerEmail = (customerEmail: string) =>
+  getCartOK({
+    customerEmail,
+    totalPrice: {
+      type: 'centPrecision',
+      currencyCode: 'EUR',
+      centAmount: 4999,
+      fractionDigits: 2,
+    },
+  });
 
 export const getPaymentResultOk: Payment = {
   id: '123456',
@@ -61,27 +73,6 @@ export const getPaymentResultOk: Payment = {
     fractionDigits: 2,
   },
   interfaceId: 'mock-REDEMPTION_ID',
-  paymentMethodInfo: {
-    method: 'Debit Card',
-    name: { 'en-US': 'Debit Card', 'en-GB': 'Debit Card' },
-  },
-  paymentStatus: { interfaceText: 'Paid' },
-  transactions: [],
-  interfaceInteractions: [],
-  createdAt: '2024-02-13T00:00:00.000Z',
-  lastModifiedAt: '2024-02-13T00:00:00.000Z',
-};
-
-export const getPaymentResultOkWithInvalidInterface: Payment = {
-  id: '123456',
-  version: 1,
-  amountPlanned: {
-    type: 'centPrecision',
-    currencyCode: 'GBP',
-    centAmount: 120000,
-    fractionDigits: 2,
-  },
-  interfaceId: 'REDEMPTION_ID',
   paymentMethodInfo: {
     method: 'Debit Card',
     name: { 'en-US': 'Debit Card', 'en-GB': 'Debit Card' },

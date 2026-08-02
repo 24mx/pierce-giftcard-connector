@@ -1,3 +1,5 @@
 # Code Editor directories and files
 .idea
 .env
+# Pierce-internal design notes, deliberately kept out of this repository.
+docs/PIERCE_*.md
