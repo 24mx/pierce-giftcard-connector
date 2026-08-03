@@ -132,12 +132,12 @@ const awaitDeployed = async (id) => {
 
 const publicUrlOrExit = (url, verb) => {
   if (!url) {
-    console.error(`usage: ${verb} <public-loyalty-url>    (the https://*.trycloudflare.com address)`);
+    console.error(`usage: ${verb} <public-loyalty-url>    (the address from \`just funnel-url\`)`);
     process.exit(1);
   }
   if (/localhost|127\.0\.0\.1/.test(url)) {
     // From inside the deployment, localhost is the deployment itself.
-    console.error('a deployment cannot reach localhost; start `just tunnel` and pass its https URL');
+    console.error('a deployment cannot reach localhost; start `just funnel` and pass its https URL');
     process.exit(1);
   }
   return url;

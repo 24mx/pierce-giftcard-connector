@@ -4,6 +4,8 @@
 > is a customer's loyalty point balance: points are held when the shopper redeems them and debited
 > by the loyalty backend once an order exists, so nothing this connector does needs compensating.
 > Upstream: `commercetools/connect-giftcard-integration-template` (remote `upstream`).
+> For commands and local testing in this fork, see
+> [Local development](/docs/LOCAL_DEVELOPMENT.md).
 > Everything below this note is upstream documentation.
 
 This repository provides a [connect](https://docs.commercetools.com/connect) template for giftcard integration connector. This boilerplate code acts as a starting point for integration with external giftcard service provider.
@@ -157,5 +159,6 @@ This command would start 3 required services, necessary for development
 
 ## Other resources
 
+* [Local development — commands and local testing](/docs/LOCAL_DEVELOPMENT.md)
 * [Developers documentation](/docs/TECH_DOCUMENTATION.md)
 * [Mock values](/docs/MOCKS.md)

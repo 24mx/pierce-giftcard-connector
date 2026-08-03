@@ -1,5 +1,6 @@
 # Pierce loyalty gift card connector — dev tasks.
-# `just processor` and `just tunnel` are long-running — run them in separate terminals.
+# `just processor` and `just ngrok` are long-running — run them in separate terminals.
+# `just funnel` is not: it hands the config to tailscaled and returns.
 # The loyalty backend that owns the points ledger lives in its own repository.
 
 set shell := ["bash", "-cu"]
@@ -10,26 +11,124 @@ processor_port := "8081"
 loyalty_url := "http://localhost:" + loyalty_port
 processor_url := "http://localhost:" + processor_port
 
+env_file := "processor/.env"
+
+# Both public addresses are permanent, and neither is written down here: this repository is public,
+# and a Funnel hostname names a development machine while an ngrok domain names an account. They
+# live in processor/.env instead, as FUNNEL_DOMAIN and NGROK_DOMAIN — bare hostnames, no scheme.
+# FUNNEL_DOMAIN is optional: without it `just funnel-url` asks tailscaled for this machine's
+# hostname, which is the same answer. NGROK_DOMAIN has no such fallback, since only the account
+# knows what it reserved.
+
 # List available recipes.
 default:
     @just --list
+
+# Values this public repository deliberately does not carry. An exported shell variable wins over
+# processor/.env; a missing key is an empty string, for the caller to reject or fall back on.
+[private]
+env-value key:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="{{key}}"
+    printf '%s' "${!name:-$(grep -h "^{{key}}=" {{env_file}} 2>/dev/null | cut -d= -f2- | tr -d '\042\047')}"
 
 # Run the connector processor against the sandbox. Needs processor/.env. Ctrl-C to stop.
 processor port=processor_port:
     cd processor && PORT={{port}} npm run dev
 
-# Prints a https://*.trycloudflare.com address; put it in LOYALTY_API_URL of the deployment.
-# Ctrl-C closes the tunnel, and close it as soon as the test is over: it publishes a development
-# machine, so keep the window as short as the work needs.
-# Expose the local loyalty backend under a public https URL, for a Connect deployment to reach.
-tunnel port=loyalty_port:
-    cloudflared tunnel --url http://localhost:{{port}} --no-autoupdate
+# ---------------------------------------------------------------------------
+# Exposing the local loyalty backend
+# ---------------------------------------------------------------------------
+# A deployment cannot reach localhost, so the backend needs a public https address. A deployment
+# also freezes LOYALTY_API_URL at creation and nothing can edit it afterwards, so every change of
+# address costs a `just retunnel`: a new deployment plus a new Checkout integration, minutes each
+# time. Both options below therefore use a permanent address, and Funnel is the default — ngrok is
+# the fallback for when Tailscale is unavailable.
+# Either way this publishes a development machine — close it when the work is done.
 
-# For a tunnel running outside your own terminal — one you started in the background, or that an
-# agent started for you. A `just tunnel` in your own shell just needs Ctrl-C.
-# Close the tunnel, so the local backend stops being publicly reachable.
-tunnel-stop:
-    @pkill -f "cloudflared tunnel" && echo "tunnel closed" || echo "no cloudflared tunnel was running"
+# Tailscale Funnel, the permanent address. `--bg` stores the config in tailscaled, so the command
+# returns at once and the address comes back on its own after a reboot: it outlives both the
+# terminal and the machine restarting. Funnel listens publicly on 443 and proxies to the local port.
+# Publish the loyalty backend under this machine's permanent Funnel address.
+funnel port=loyalty_port:
+    tailscale funnel --bg {{port}}
+    @just funnel-url
+
+# FUNNEL_DOMAIN if processor/.env names one, otherwise whatever tailscaled says this machine is —
+# the same value, so the entry only matters when you want a specific node rather than this one.
+# Print this machine's Funnel address — the value for `just deploy` / `just retunnel`.
+funnel-url:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    domain="$(just env-value FUNNEL_DOMAIN)"
+    if [ -z "$domain" ]; then
+        domain=$(tailscale status --json |
+          python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
+    fi
+    echo "https://${domain}"
+
+# What this machine publishes, and which local port it proxies to.
+funnel-status:
+    tailscale funnel status
+
+# Funnel survives reboots, so this is the only thing that stops publishing the backend.
+# Stop publishing over Funnel.
+funnel-stop:
+    tailscale funnel reset
+
+# The other permanent address, for when Tailscale's control plane is having a bad day — the free
+# plan reserves one domain per account. Long-running: Ctrl-C closes it and, unlike Funnel, nothing
+# brings it back by itself.
+# Publish the loyalty backend under the reserved ngrok domain.
+ngrok port=loyalty_port domain="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    domain="{{domain}}"
+    if [ -z "$domain" ]; then
+        domain="$(just env-value NGROK_DOMAIN)"
+    fi
+    if [ -z "$domain" ]; then
+        echo "NGROK_DOMAIN is not set — put the domain reserved on your ngrok account in {{env_file}}" >&2
+        exit 1
+    fi
+    ngrok http {{port}} --url="$domain"
+
+# A local curl proves nothing about a Funnel address. tailscaled routes every ts.net lookup straight
+# to Tailscale's own nameserver, so this machine resolves a Funnel hostname that public DNS may not
+# carry at all — it answers here and is unreachable from everywhere else. So ask public resolvers
+# instead, and two of them, because one serving a stale negative answer is not the same thing as the
+# address being down. Then call /balance through it: the path a Connect deployment takes.
+# Prove a public address really reaches the loyalty backend from the internet.
+tunnel-check url:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    host=$(echo "{{url}}" | sed -E 's#^https?://##; s#/.*##')
+    resolve() {
+        curl -s --max-time 15 -H 'accept: application/dns-json' "$1" |
+          python3 -c 'import json,sys; a=json.load(sys.stdin).get("Answer") or []; print(next((r["data"] for r in a if r.get("type")==1), ""))'
+    }
+    google=$(resolve "https://dns.google/resolve?name=${host}&type=A" || true)
+    cloudflare=$(resolve "https://cloudflare-dns.com/dns-query?name=${host}&type=A" || true)
+    adguard=$(resolve "https://dns.adguard-dns.com/resolve?name=${host}&type=A" || true)
+    echo "public DNS — google: ${google:-NXDOMAIN}  cloudflare: ${cloudflare:-NXDOMAIN}  adguard: ${adguard:-NXDOMAIN}"
+    ip="${google:-${cloudflare:-$adguard}}"
+    if [ -z "$ip" ]; then
+        echo "${host} resolves for no public resolver — nothing on the internet can reach it" >&2
+        exit 1
+    fi
+    # Three resolvers, because one of them is not a verdict: during a Tailscale incident Google and
+    # Cloudflare both served NXDOMAIN for a Funnel name that AdGuard resolved and that answered fine.
+    # Whoever disagrees is a real risk, though — a deployment inherits whatever resolver it happens
+    # to use, so partial resolution means the address works for some callers and not others.
+    if [ -z "$google" ] || [ -z "$cloudflare" ] || [ -z "$adguard" ]; then
+        echo "WARNING: public resolvers disagree — reachable through some, unreachable through others" >&2
+    fi
+    # The key lives in processor/.env, not in your shell — an exported one still wins if you set it.
+    key="$(just env-value LOYALTY_API_KEY)"
+    curl -s -w '\n--- http=%{http_code} ip=%{remote_ip} tls_verify=%{ssl_verify_result}\n' \
+      --max-time 30 --resolve "${host}:443:${ip}" -H "X-Api-Key: ${key}" \
+      "{{url}}/loyalty/giftcard/balance?userId=demo%40example.com&currency=EUR"
 
 # Unit tests.
 test:
@@ -103,8 +202,8 @@ connector-status:
 connector-publish:
     node scripts/ct-connector.mjs publish
 
-# Pass the https://*.trycloudflare.com address from `just tunnel` — a deployment cannot reach
-# localhost. Reads every other value from processor/.env.
+# Pass the public address of the loyalty backend — `just funnel-url` or the ngrok domain. A
+# deployment cannot reach localhost. Every other value comes from processor/.env.
 # Create this connector's deployment in the project.
 deploy tunnel_url:
     node scripts/ct-connector.mjs deploy {{tunnel_url}}
@@ -122,6 +221,8 @@ redeploy:
 # Point the deployment at a new tunnel address. Neither a deployment's configuration nor a payment
 # integration's deployment reference can be edited, so this builds a new deployment, moves the
 # Checkout integration onto it, and deletes the old one. Takes a few minutes.
+# Both `just funnel` and `just ngrok` hold their address permanently, so this should be a one-time
+# cost — needing it twice for the same machine means the address moved and something is wrong.
 # Move the whole stack onto a new tunnel URL.
 retunnel tunnel_url:
     node scripts/ct-connector.mjs retunnel {{tunnel_url}}
@@ -136,7 +237,7 @@ points-balance user="demo@example.com" base=loyalty_url:
     #!/usr/bin/env bash
     set -eo pipefail
     # The key lives in processor/.env, not in your shell — an exported one still wins if you set it.
-    key="${LOYALTY_API_KEY:-$(grep -h '^LOYALTY_API_KEY=' processor/.env 2>/dev/null | cut -d= -f2- | tr -d '\042\047')}"
+    key="$(just env-value LOYALTY_API_KEY)"
     auth=(); [ -n "$key" ] && auth=(-H "X-Api-Key: $key")
     curl -s "${auth[@]}" "{{base}}/loyalty/giftcard/balance?userId={{user}}&currency=EUR"
     echo
@@ -146,7 +247,7 @@ points-add user="demo@example.com" points="5000" base=loyalty_url:
     #!/usr/bin/env bash
     set -eo pipefail
     # The key lives in processor/.env, not in your shell — an exported one still wins if you set it.
-    key="${LOYALTY_API_KEY:-$(grep -h '^LOYALTY_API_KEY=' processor/.env 2>/dev/null | cut -d= -f2- | tr -d '\042\047')}"
+    key="$(just env-value LOYALTY_API_KEY)"
     auth=(); [ -n "$key" ] && auth=(-H "X-Api-Key: $key")
     curl -s -X POST "${auth[@]}" -H 'Content-Type: application/json' \
       -d '{"userId":"{{user}}","points":{{points}},"reason":"local dev"}' \
@@ -158,7 +259,7 @@ points-void payment base=loyalty_url:
     #!/usr/bin/env bash
     set -eo pipefail
     # The key lives in processor/.env, not in your shell — an exported one still wins if you set it.
-    key="${LOYALTY_API_KEY:-$(grep -h '^LOYALTY_API_KEY=' processor/.env 2>/dev/null | cut -d= -f2- | tr -d '\042\047')}"
+    key="$(just env-value LOYALTY_API_KEY)"
     auth=(); [ -n "$key" ] && auth=(-H "X-Api-Key: $key")
     curl -s -X POST "${auth[@]}" -H 'Content-Type: application/json' \
       -d '{"paymentId":"{{payment}}"}' "{{base}}/loyalty/giftcard/void"
