@@ -19,6 +19,12 @@ export type LoyaltyHoldRequest = {
   paymentId: string;
   cartId: string;
   amount: LoyaltyAmount;
+  /**
+   * The cart total this reservation is measured against. The backend keeps EUR 1 of every order
+   * payable by a non-points method and enforces that floor itself, so the rule no longer depends on
+   * this connector's arithmetic being right.
+   */
+  cartTotal: LoyaltyAmount;
 };
 
 /** Shared by hold and void: the points touched plus the resulting spendable balance. */

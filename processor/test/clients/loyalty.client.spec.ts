@@ -133,13 +133,17 @@ describe('loyalty.client', () => {
         paymentId: 'payment-1',
         cartId: 'cart-1',
         amount: { centAmount: 2400, currencyCode: 'EUR' },
+        cartTotal: { centAmount: 4499, currencyCode: 'EUR' },
       });
 
+      // cartTotal travels with every hold: the backend measures the EUR 1 card floor against it, so
+      // the rule lives in the ledger rather than only in this connector's arithmetic.
       expect(receivedBody).toStrictEqual({
         userId: 'demo@example.com',
         paymentId: 'payment-1',
         cartId: 'cart-1',
         amount: { centAmount: 2400, currencyCode: 'EUR' },
+        cartTotal: { centAmount: 4499, currencyCode: 'EUR' },
       });
       expect(result).toStrictEqual({ paymentId: 'payment-1', points: 2400, balance: 200 });
     });

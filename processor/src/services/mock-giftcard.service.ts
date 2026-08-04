@@ -36,9 +36,10 @@ import { log } from '../libs/logger';
  * Integrates commercetools with the Pierce loyalty backend, whose "gift card" is the customer's
  * loyalty point balance.
  *
- * Points are held at redeem and debited by the backend itself once an order exists, so nothing this
- * service does ever has to be compensated: an abandoned checkout requires no call at all. Capture is
- * deliberately absent - the loyalty backend drives it off the order signal.
+ * Redeeming DEBITS the points immediately (a provisional debit), so the balance the backend reports is
+ * always what the customer may still spend - nothing has to be netted out anywhere. The order signal
+ * then only settles that debit, which is why capture is deliberately absent here. The corollary is
+ * that an abandoned checkout DOES need a call: closing the reservation is what gives the points back.
  */
 export type MockGiftCardServiceOptions = {
   ctCartService: CommercetoolsCartService;
@@ -171,10 +172,11 @@ export class MockGiftCardService extends AbstractGiftCardService {
   }
 
   /**
-   * Order matters: the Payment is created and attached, the points are held, and only then is the
-   * transaction written. A hold whose transaction never got written is harmless - a payment with no
-   * Charge does not count towards cart coverage, and the hold ages out. The reverse order is not:
-   * it is coverage the ledger never recorded.
+   * Order matters: the Payment is created and attached, the points are reserved, and only then is the
+   * transaction written. A reservation whose transaction never got written costs the customer their
+   * points until the backend's sweep releases them at TTL - bad, but recoverable, and the payment
+   * carries no Charge so it never counts towards cart coverage. The reverse order is not recoverable:
+   * it is coverage the ledger never recorded, i.e. an order paid with points nobody debited.
    */
   async redeem(opts: { data: RedeemRequestDTO }): Promise<RedeemResponseDTO> {
     const ctCart = await this.ctCartService.getCart({
@@ -215,6 +217,12 @@ export class MockGiftCardService extends AbstractGiftCardService {
         paymentId: ctPayment.id,
         cartId: ctCart.id,
         amount: redeemAmount,
+        // Off the cart we just read, so the backend can enforce the EUR 1 card floor itself rather
+        // than trusting the amount the checkout SDK handed us.
+        cartTotal: {
+          centAmount: ctCart.totalPrice.centAmount,
+          currencyCode: ctCart.totalPrice.currencyCode,
+        },
       });
     } catch (e) {
       // Includes an uncertain hold (timeout, 5xx): leaving the payment transaction-less is the only
@@ -329,9 +337,14 @@ export class MockGiftCardService extends AbstractGiftCardService {
 
   /**
    * Reverting the coverage comes first: a Refund in state Success makes the SDK count the whole
-   * payment as 0 towards the cart, which is the outcome the customer asked for. Closing the hold is
-   * a courtesy on top - it is not a ledger operation, and a hold ages out on its own - so a failure
-   * there is logged and the operation still reports success.
+   * payment as 0 towards the cart, which is the outcome the customer asked for.
+   *
+   * Closing the reservation afterwards IS a ledger operation - it is what credits the points back, so
+   * a failure here leaves the customer's points debited for a payment that no longer covers anything.
+   * The operation still reports success, because the coverage the customer asked us to remove is
+   * already gone and re-running this would not help; the loyalty backend's reconciliation sweep
+   * recovers the points at TTL. But that is a delay measured in TTLs, not a non-event, so it is
+   * logged as an error rather than a warning.
    */
   private async revertCoverageAndCloseHold(opts: {
     payment: Payment;
@@ -355,11 +368,14 @@ export class MockGiftCardService extends AbstractGiftCardService {
     try {
       await LoyaltyAPI().voidHold({ paymentId: opts.payment.id });
     } catch (e) {
-      log.warn(`Could not close the loyalty hold, it will age out at its TTL.`, {
-        paymentId: opts.payment.id,
-        action: opts.action,
-        error: e instanceof LoyaltyApiError ? e.message : String(e),
-      });
+      log.error(
+        `Could not release the loyalty reservation: the points stay debited until the backend's sweep recovers them at TTL.`,
+        {
+          paymentId: opts.payment.id,
+          action: opts.action,
+          error: e instanceof LoyaltyApiError ? e.message : String(e),
+        },
+      );
     }
 
     log.info(`Payment modification completed.`, {

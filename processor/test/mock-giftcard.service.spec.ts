@@ -273,11 +273,14 @@ describe('mock-giftcard.service', () => {
       const result = await mockGiftCardService.redeem(redeemOpts);
 
       expect(callOrder).toStrictEqual(['hold', 'updatePayment']);
+      // cartTotal comes off the cart we have already read: the backend needs it to enforce the EUR 1
+      // card floor itself instead of trusting whatever amount this connector was handed.
       expect(holdBody).toStrictEqual({
         userId: 'demo@example.com',
         paymentId: createPaymentResultOk.id,
         cartId: cart.id,
         amount: { centAmount: 2400, currencyCode: 'EUR' },
+        cartTotal: { centAmount: cart.totalPrice.centAmount, currencyCode: cart.totalPrice.currencyCode },
       });
       expect(result).toStrictEqual({
         result: 'Success',

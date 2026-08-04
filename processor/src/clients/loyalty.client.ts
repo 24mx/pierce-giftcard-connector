@@ -19,9 +19,9 @@ export type LoyaltyClientOptions = {
 /**
  * HTTP client for the Pierce loyalty backend.
  *
- * The backend owns the points ledger; this connector is only a client of it. Points are held at
- * redeem and debited by the backend itself once an order exists, so there is deliberately no
- * capture call here.
+ * The backend owns the points ledger; this connector is only a client of it. Redeeming debits the
+ * points there and then (a provisional debit) and the order signal settles that debit, so there is
+ * deliberately no capture call here.
  */
 export class LoyaltyClient {
   private readonly baseUrl: string;
@@ -34,7 +34,10 @@ export class LoyaltyClient {
     this.apiKey = opts.apiKey;
   }
 
-  /** Spendable points: ledger balance minus every open hold. */
+  /**
+   * Spendable points — the ledger balance itself. An open reservation has already been debited there,
+   * so this number needs no netting and is what the checkout SDK may spend.
+   */
   public async balance(request: LoyaltyBalanceRequest): Promise<LoyaltyBalanceResponse> {
     const query = new URLSearchParams({
       userId: request.userId,
@@ -45,9 +48,10 @@ export class LoyaltyClient {
   }
 
   /**
-   * Withholds points for a payment. Idempotent on `paymentId`: a replay returns the existing hold
-   * and withholds nothing extra. Nothing is debited here - the backend books the debit itself once
-   * an order exists.
+   * Reserves points for a payment: the backend debits them immediately and refuses the call when the
+   * balance cannot cover it (409) or when the reservation would leave less than EUR 1 payable by card
+   * (400). Idempotent on `paymentId` — a replay returns the existing reservation and debits nothing
+   * extra.
    */
   public async hold(request: LoyaltyHoldRequest): Promise<LoyaltyHoldResponse> {
     return this.send<LoyaltyHoldResponse>('/loyalty/giftcard/hold', {
@@ -57,8 +61,9 @@ export class LoyaltyClient {
   }
 
   /**
-   * Closes a hold early so the points stop being withheld now rather than at TTL. Not a ledger
-   * operation - correctness does not depend on it, a hold ages out on its own.
+   * Releases a reservation, which credits the points back. This IS a ledger operation: skipping it
+   * leaves the customer's points debited until the backend's reconciliation sweep recovers them at
+   * TTL, so a failure here is worth an error rather than a shrug.
    */
   public async voidHold(request: LoyaltyVoidRequest): Promise<LoyaltyHoldResponse> {
     return this.send<LoyaltyHoldResponse>('/loyalty/giftcard/void', {

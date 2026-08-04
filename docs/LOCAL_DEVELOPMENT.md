@@ -81,16 +81,17 @@ sandbox project. They need `just processor` and the loyalty backend up.
 | `just e2e` | mints a Checkout session for a fresh EUR cart, then balance → redeem → cancel → insufficient |
 | `just e2e-order` | the purchase path `just e2e` never reaches: redeem → real Order → order signal → capture. Stands in for the Kafka consumer |
 
-`just e2e-order` asserts against the **ledger**, not the spendable balance: a hold and a capture
-lower spendable by the same amount, but only a capture writes a ledger row.
+`just e2e-order` asserts against the **ledger**. Since the 2026-08-04 revert to provisional debits the
+balance drops at redeem and capture only settles that debit, so what the order path proves is that the
+points stay gone — an abandoned reservation is the one the sweep credits back.
 
 ### Loyalty ledger helpers
 
 | Command | What it does |
 |---|---|
-| `just points-balance [user]` | spendable points — ledger balance minus every open hold |
+| `just points-balance [user]` | spendable points — the ledger balance itself, since a reservation is already debited out of it |
 | `just points-add [user] [points]` | credits demo points, so there is something to redeem |
-| `just points-void <paymentId>` | releases a hold a test left behind |
+| `just points-void <paymentId>` | releases a reservation a test left behind, crediting the points back |
 
 ### Shipping to commercetools
 
