@@ -184,9 +184,14 @@ export class MockGiftCardService extends AbstractGiftCardService {
     });
     const userId = this.getLoyaltyUserId(ctCart);
     const redeemAmount = opts.data.redeemAmount;
+    // TEMPORARY (GIFTCARD_ZERO_CT_COVERAGE): zeroing the CT-side amount here keeps this Payment out
+    // of commercetools Checkout's own coverage math, working around a VAT cross-check the card
+    // connector does against the cart's undiscounted lines. The loyalty hold below still moves the
+    // real amount - only what CT itself sees this Payment as covering changes.
+    const ctCoverageAmount = getConfig().giftcardZeroCtCoverage ? { ...redeemAmount, centAmount: 0 } : redeemAmount;
 
     const ctPayment = await this.ctPaymentService.createPayment({
-      amountPlanned: redeemAmount,
+      amountPlanned: ctCoverageAmount,
       paymentMethodInfo: {
         paymentInterface: getPaymentInterfaceFromContext() || 'pierce-loyalty-giftcard',
         method: 'giftcard',

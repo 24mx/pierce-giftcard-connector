@@ -22,10 +22,10 @@ import { HealthCheckResult } from '@commercetools/connect-payments-sdk';
 import { AbstractGiftCardService } from '../src/services/abstract-giftcard.service';
 
 interface FlexibleConfig {
-  [key: string]: string | number | undefined; // Adjust the type according to your config values
+  [key: string]: string | number | boolean | undefined; // Adjust the type according to your config values
 }
 
-function setupMockConfig(keysAndValues: Record<string, string | number>) {
+function setupMockConfig(keysAndValues: Record<string, string | number | boolean>) {
   const mockConfig: FlexibleConfig = {};
   Object.keys(keysAndValues).forEach((key) => {
     mockConfig[key] = keysAndValues[key];
@@ -312,6 +312,46 @@ describe('mock-giftcard.service', () => {
         transaction: {
           type: 'Charge',
           amount: createPaymentResultOk.amountPlanned,
+          state: 'Success',
+        },
+      });
+    });
+
+    // Temporary workaround (GIFTCARD_ZERO_CT_COVERAGE, see .env.template): Briqpay's own /config
+    // step recomputes VAT from the cart's undiscounted lines and rejects whenever this Payment
+    // already reduces what Checkout asks it to cover. Zeroing the CT-side amount removes this
+    // Payment from Checkout's coverage math without touching the real loyalty hold below, so the
+    // card leg is asked for the full total again and Briqpay's own recompute matches it.
+    test('zeroes the CT coverage amount but still holds the real amount, when GIFTCARD_ZERO_CT_COVERAGE is set', async () => {
+      setupMockConfig({ loyaltyApiUrl: LOYALTY_URL, loyaltyTimeoutMs: 5000, giftcardZeroCtCoverage: true });
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      jest
+        .spyOn(DefaultPaymentService.prototype, 'createPayment')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .mockImplementation(async (opts: any) => ({ ...createPaymentResultOk, amountPlanned: opts.amountPlanned }));
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(getCartOK());
+      const updatePayment = jest
+        .spyOn(DefaultPaymentService.prototype, 'updatePayment')
+        .mockResolvedValue(updatePaymentResultOk);
+
+      let holdBody: unknown;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
+          holdBody = await request.json();
+          return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
+        }),
+      );
+
+      await mockGiftCardService.redeem(redeemOpts);
+
+      expect(holdBody).toMatchObject({ amount: { centAmount: 2400, currencyCode: 'EUR' } });
+      expect(updatePayment).toHaveBeenCalledWith({
+        id: createPaymentResultOk.id,
+        transaction: {
+          type: 'Charge',
+          amount: { centAmount: 0, currencyCode: 'EUR' },
           state: 'Success',
         },
       });

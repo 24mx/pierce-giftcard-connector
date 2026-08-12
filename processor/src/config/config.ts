@@ -20,6 +20,12 @@ export const config = {
   // Shared secret for /loyalty/**. Empty means the backend is unsecured - fine on a laptop only.
   loyaltyApiKey: process.env.LOYALTY_API_KEY || '',
 
+  // TEMPORARY workaround, see redeem() in mock-giftcard.service.ts: zeroes the CT-side amount of
+  // the redeem Payment so it no longer reduces what commercetools Checkout asks the card connector
+  // to cover, working around a VAT cross-check that connector does on its own. The real loyalty
+  // hold is unaffected. Drop this flag once that connector prorates its own amount instead.
+  giftcardZeroCtCoverage: process.env.GIFTCARD_ZERO_CT_COVERAGE === 'true',
+
   // Required by logger
   loggerLevel: process.env.LOGGER_LEVEL || 'info',
 };
