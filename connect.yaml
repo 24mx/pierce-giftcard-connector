@@ -39,6 +39,10 @@ deployAs:
           description: Timeout for calls to the loyalty backend, kept well under the widget's patience
           required: false
           default: "5000"
+        - key: GIFTCARD_ZERO_CT_COVERAGE
+          description: TEMPORARY workaround for the Briqpay card connector's VAT cross-check, which rejects whenever another payment already reduces what it is asked to cover. Zeroes this connector's CT-side coverage amount; the real loyalty hold is unaffected, but the card leg then covers the cart's full total again. Leave false once Briqpay prorates its own amount.
+          required: false
+          default: "false"
       securedConfiguration:
         - key: CTP_CLIENT_SECRET
           description: commercetools client secret

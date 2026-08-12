@@ -105,6 +105,7 @@ const createDeployment = async (loyaltyUrl) => {
           { key: 'CTP_JWT_ISSUER', value: env.CTP_JWT_ISSUER },
           { key: 'LOYALTY_API_URL', value: loyaltyUrl.replace(/\/$/, '') },
           { key: 'LOYALTY_TIMEOUT_MS', value: env.LOYALTY_TIMEOUT_MS || '5000' },
+          { key: 'GIFTCARD_ZERO_CT_COVERAGE', value: env.GIFTCARD_ZERO_CT_COVERAGE || 'false' },
         ],
         securedConfiguration: [
           { key: 'CTP_CLIENT_SECRET', value: env.CTP_CLIENT_SECRET },
