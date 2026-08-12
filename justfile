@@ -167,8 +167,9 @@ e2e url=processor_url:
 # -> rebuild. `just release vX.Y.Z` does every step after the commit; `just redeploy` then restarts
 # the running deployment on the new build.
 
-# The tag pushed to the public mirror. The private repo stays the working remote.
-public_remote := "public"
+# The remote Connect reads: the tag has to exist there, under the URL the connector draft names.
+# `just connector-status` prints that URL — this remote must be the one pointing at it.
+public_remote := "origin"
 
 # Publish the current commit as a new connector version and rebuild it in CT.
 release tag:
