@@ -52,7 +52,7 @@ export const getCartOK = (overrides: Partial<Cart> = {}) => {
 };
 
 /** Cart of an identified customer, in the currency the loyalty backend supports. */
-export const getCartWithCustomerEmail = (customerEmail: string) =>
+export const getCartWithCustomerEmail = (customerEmail: string, overrides: Partial<Cart> = {}) =>
   getCartOK({
     customerEmail,
     totalPrice: {
@@ -61,6 +61,7 @@ export const getCartWithCustomerEmail = (customerEmail: string) =>
       centAmount: 4999,
       fractionDigits: 2,
     },
+    ...overrides,
   });
 
 export const getPaymentResultOk: Payment = {
@@ -145,3 +146,42 @@ export const createPaymentResultOk: Payment = {
   interfaceInteractions: [],
   anonymousId: 'ANONYMOUS_ID',
 };
+
+/**
+ * A giftcard `Payment` already attached to a cart from a prior redeem() call — the shape needed to
+ * simulate "the shopper redeemed points, abandoned checkout, and is redeeming again."
+ */
+export const openGiftCardPaymentFixture = (overrides: Partial<Payment> = {}): Payment => ({
+  id: 'stale-giftcard-payment',
+  version: 1,
+  createdAt: '2024-01-01T00:00:00.000Z',
+  lastModifiedAt: '2024-01-01T00:00:00.000Z',
+  interfaceId: 'STALE_REDEMPTION_ID',
+  amountPlanned: {
+    type: 'centPrecision',
+    currencyCode: 'EUR',
+    centAmount: 2000,
+    fractionDigits: 2,
+  },
+  paymentMethodInfo: {
+    paymentInterface: 'pierce-loyalty-giftcard',
+    method: 'giftcard',
+  },
+  paymentStatus: {},
+  transactions: [
+    {
+      id: 'STALE_TXN_CHARGE',
+      type: 'Charge',
+      amount: {
+        type: 'centPrecision',
+        currencyCode: 'EUR',
+        centAmount: 2000,
+        fractionDigits: 2,
+      },
+      interactionId: 'STALE_REDEMPTION_ID',
+      state: 'Success',
+    },
+  ],
+  interfaceInteractions: [],
+  ...overrides,
+});
