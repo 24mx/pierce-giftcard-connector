@@ -181,7 +181,14 @@ export class MockGiftCardService extends AbstractGiftCardService {
   async redeem(opts: { data: RedeemRequestDTO }): Promise<RedeemResponseDTO> {
     const ctCart = await this.ctCartService.getCart({
       id: getCartIdFromContext(),
+      expand: ['paymentInfo.payments[*]'],
     });
+
+    // A prior redeem() on this cart may still have an open giftcard payment attached (e.g. the
+    // shopper redeemed, abandoned checkout, and is redeeming again) — close it the same way a
+    // manual cancelPayment would, so it never survives to be captured alongside the new one.
+    await this.voidStaleGiftCardPayments(ctCart);
+
     const userId = this.getLoyaltyUserId(ctCart);
     const redeemAmount = opts.data.redeemAmount;
     // TEMPORARY (GIFTCARD_ZERO_CT_COVERAGE): zeroing the CT-side amount here keeps this Payment out
@@ -306,6 +313,29 @@ export class MockGiftCardService extends AbstractGiftCardService {
     }
 
     return customerEmail;
+  }
+
+  private isOpenGiftCardPayment(payment: Payment): boolean {
+    if (payment.paymentMethodInfo.method !== 'giftcard') {
+      return false;
+    }
+    return !payment.transactions.some(
+      (transaction) => transaction.type === 'Refund' && transaction.state === 'Success',
+    );
+  }
+
+  private async voidStaleGiftCardPayments(ctCart: Cart): Promise<void> {
+    const stalePayments = (ctCart.paymentInfo?.payments ?? [])
+      .map((paymentReference) => paymentReference.obj)
+      .filter((payment): payment is Payment => !!payment && this.isOpenGiftCardPayment(payment));
+
+    for (const stalePayment of stalePayments) {
+      await this.revertCoverageAndCloseHold({
+        payment: stalePayment,
+        amount: stalePayment.amountPlanned,
+        action: 'redeem',
+      });
+    }
   }
 
   /**

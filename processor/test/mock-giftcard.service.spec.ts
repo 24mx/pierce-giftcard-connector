@@ -15,6 +15,7 @@ import {
   getCartOK,
   getCartWithCustomerEmail,
   getPaymentResultOk,
+  openGiftCardPaymentFixture,
   updatePaymentResultOk,
 } from './mocks/coco';
 
@@ -286,6 +287,50 @@ describe('mock-giftcard.service', () => {
         result: 'Success',
         paymentReference: createPaymentResultOk.id,
         redemptionId: createPaymentResultOk.id,
+      });
+    });
+
+    test('voids an existing open giftcard payment on the cart before creating a new redemption', async () => {
+      setupLoyaltyConfig();
+      const stalePayment = openGiftCardPaymentFixture({ id: 'stale-giftcard-payment' });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: stalePayment.id, obj: stalePayment }] },
+      });
+      const callOrder: string[] = [];
+
+      const getCart = jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      const updatePayment = jest
+        .spyOn(DefaultPaymentService.prototype, 'updatePayment')
+        .mockImplementation(async (opts) => {
+          callOrder.push(`updatePayment:${opts.id}:${opts.transaction.type}`);
+          return updatePaymentResultOk;
+        });
+
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async () => {
+          callOrder.push('void');
+          return HttpResponse.json({ paymentId: stalePayment.id, points: 2000, balance: 2000 });
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async () => {
+          callOrder.push('hold');
+          return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
+        }),
+      );
+
+      await mockGiftCardService.redeem(redeemOpts);
+
+      expect(getCart).toHaveBeenCalledWith(expect.objectContaining({ expand: ['paymentInfo.payments[*]'] }));
+      expect(callOrder).toStrictEqual([
+        `updatePayment:${stalePayment.id}:Refund`,
+        'void',
+        'hold',
+        `updatePayment:${createPaymentResultOk.id}:Charge`,
+      ]);
+      expect(updatePayment).toHaveBeenCalledWith({
+        id: stalePayment.id,
+        transaction: { type: 'Refund', amount: stalePayment.amountPlanned, state: 'Success' },
       });
     });
 
