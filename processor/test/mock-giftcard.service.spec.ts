@@ -362,6 +362,107 @@ describe('mock-giftcard.service', () => {
       });
     });
 
+    test('does not re-void a giftcard payment that already has a successful Refund transaction', async () => {
+      setupLoyaltyConfig();
+      const alreadyVoidedPayment = openGiftCardPaymentFixture({
+        id: 'already-voided-payment',
+        transactions: [
+          {
+            id: 'TXN_CHARGE',
+            type: 'Charge',
+            amount: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 2000, fractionDigits: 2 },
+            interactionId: 'STALE_REDEMPTION_ID',
+            state: 'Success',
+          },
+          {
+            id: 'TXN_REFUND',
+            type: 'Refund',
+            amount: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 2000, fractionDigits: 2 },
+            interactionId: 'STALE_REDEMPTION_ID',
+            state: 'Success',
+          },
+        ],
+      });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: alreadyVoidedPayment.id, obj: alreadyVoidedPayment }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      const updatePayment = jest
+        .spyOn(DefaultPaymentService.prototype, 'updatePayment')
+        .mockResolvedValue(updatePaymentResultOk);
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+          HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 }),
+        ),
+      );
+
+      await mockGiftCardService.redeem(redeemOpts);
+
+      expect(updatePayment).toHaveBeenCalledTimes(1);
+      expect(updatePayment).toHaveBeenCalledWith({
+        id: createPaymentResultOk.id,
+        transaction: { type: 'Charge', amount: createPaymentResultOk.amountPlanned, state: 'Success' },
+      });
+    });
+
+    test('does not touch a non-giftcard payment already on the cart', async () => {
+      setupLoyaltyConfig();
+      const cardPayment = { ...getPaymentResultOk, id: 'existing-card-payment' };
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: cardPayment.id, obj: cardPayment }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      const updatePayment = jest
+        .spyOn(DefaultPaymentService.prototype, 'updatePayment')
+        .mockResolvedValue(updatePaymentResultOk);
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+          HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 }),
+        ),
+      );
+
+      await mockGiftCardService.redeem(redeemOpts);
+
+      expect(updatePayment).toHaveBeenCalledTimes(1);
+      expect(updatePayment).toHaveBeenCalledWith({
+        id: createPaymentResultOk.id,
+        transaction: { type: 'Charge', amount: createPaymentResultOk.amountPlanned, state: 'Success' },
+      });
+    });
+
+    test('still creates the new redemption when releasing the stale hold fails', async () => {
+      setupLoyaltyConfig();
+      const stalePayment = openGiftCardPaymentFixture({ id: 'stale-giftcard-payment' });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: stalePayment.id, obj: stalePayment }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => HttpResponse.error()),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+          HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 }),
+        ),
+      );
+
+      const result = await mockGiftCardService.redeem(redeemOpts);
+
+      expect(result).toStrictEqual({
+        result: 'Success',
+        paymentReference: createPaymentResultOk.id,
+        redemptionId: createPaymentResultOk.id,
+      });
+    });
+
     // Temporary workaround (GIFTCARD_ZERO_CT_COVERAGE, see .env.template): Briqpay's own /config
     // step recomputes VAT from the cart's undiscounted lines and rejects whenever this Payment
     // already reduces what Checkout asks it to cover. Zeroing the CT-side amount removes this
