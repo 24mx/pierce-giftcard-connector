@@ -184,12 +184,17 @@ export class MockGiftCardService extends AbstractGiftCardService {
       expand: ['paymentInfo.payments[*]'],
     });
 
+    const userId = this.getLoyaltyUserId(ctCart);
+
     // A prior redeem() on this cart may still have an open giftcard payment attached (e.g. the
     // shopper redeemed, abandoned checkout, and is redeeming again) — close it the same way a
     // manual cancelPayment would, so it never survives to be captured alongside the new one.
+    // This must happen before the new hold below: the loyalty backend debits points at hold time,
+    // so if the old hold's points are not released first, a larger re-redemption could fail the
+    // backend's balance check even though the shopper has enough points once the old (abandoned)
+    // redemption is counted back in.
     await this.voidStaleGiftCardPayments(ctCart);
 
-    const userId = this.getLoyaltyUserId(ctCart);
     const redeemAmount = opts.data.redeemAmount;
     // TEMPORARY (GIFTCARD_ZERO_CT_COVERAGE): zeroing the CT-side amount here keeps this Payment out
     // of commercetools Checkout's own coverage math, working around a VAT cross-check the card
@@ -333,7 +338,7 @@ export class MockGiftCardService extends AbstractGiftCardService {
       await this.revertCoverageAndCloseHold({
         payment: stalePayment,
         amount: stalePayment.amountPlanned,
-        action: 'redeem',
+        action: 'voidStaleOnRedeem',
       });
     }
   }

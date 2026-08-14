@@ -334,6 +334,63 @@ describe('mock-giftcard.service', () => {
       });
     });
 
+    test('voids every stale open giftcard payment when the cart carries more than one', async () => {
+      setupLoyaltyConfig();
+      const stalePayment1 = openGiftCardPaymentFixture({ id: 'stale-giftcard-payment-1' });
+      const stalePayment2 = openGiftCardPaymentFixture({ id: 'stale-giftcard-payment-2' });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: {
+          payments: [
+            { typeId: 'payment', id: stalePayment1.id, obj: stalePayment1 },
+            { typeId: 'payment', id: stalePayment2.id, obj: stalePayment2 },
+          ],
+        },
+      });
+      const callOrder: string[] = [];
+
+      const getCart = jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      const updatePayment = jest
+        .spyOn(DefaultPaymentService.prototype, 'updatePayment')
+        .mockImplementation(async (opts) => {
+          callOrder.push(`updatePayment:${opts.id}:${opts.transaction.type}`);
+          return updatePaymentResultOk;
+        });
+
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async ({ request }) => {
+          const body = (await request.json()) as { paymentId: string };
+          callOrder.push(`void:${body.paymentId}`);
+          return HttpResponse.json({ paymentId: body.paymentId, points: 2000, balance: 2000 });
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async () => {
+          callOrder.push('hold');
+          return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
+        }),
+      );
+
+      await mockGiftCardService.redeem(redeemOpts);
+
+      expect(getCart).toHaveBeenCalledWith(expect.objectContaining({ expand: ['paymentInfo.payments[*]'] }));
+      expect(callOrder).toStrictEqual([
+        `updatePayment:${stalePayment1.id}:Refund`,
+        `void:${stalePayment1.id}`,
+        `updatePayment:${stalePayment2.id}:Refund`,
+        `void:${stalePayment2.id}`,
+        'hold',
+        `updatePayment:${createPaymentResultOk.id}:Charge`,
+      ]);
+      expect(updatePayment).toHaveBeenCalledWith({
+        id: stalePayment1.id,
+        transaction: { type: 'Refund', amount: stalePayment1.amountPlanned, state: 'Success' },
+      });
+      expect(updatePayment).toHaveBeenCalledWith({
+        id: stalePayment2.id,
+        transaction: { type: 'Refund', amount: stalePayment2.amountPlanned, state: 'Success' },
+      });
+    });
+
     test('writes a Charge transaction for the held amount', async () => {
       setupLoyaltyConfig();
       jest
