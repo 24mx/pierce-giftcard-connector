@@ -645,6 +645,75 @@ describe('mock-giftcard.service', () => {
       expect(updatePayment).toHaveBeenCalledTimes(1);
     });
 
+    test('does not write a second Refund transaction when the conflicting payment was already reverted', async () => {
+      setupLoyaltyConfig();
+      const alreadyVoidedPayment = openGiftCardPaymentFixture({
+        id: 'already-voided-payment',
+        transactions: [
+          {
+            id: 'TXN_CHARGE',
+            type: 'Charge',
+            amount: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 2000, fractionDigits: 2 },
+            interactionId: 'STALE_REDEMPTION_ID',
+            state: 'Success',
+          },
+          {
+            id: 'TXN_REFUND',
+            type: 'Refund',
+            amount: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 2000, fractionDigits: 2 },
+            interactionId: 'STALE_REDEMPTION_ID',
+            state: 'Success',
+          },
+        ],
+      });
+      // Already reverted on CT (a successful Refund is already there), but the loyalty backend still
+      // thinks its hold is open - as if a prior voidHold call silently failed - so it is both
+      // attached to the cart (voidStaleGiftCardPayments skips it, since it is not "open") and named
+      // as the 409's existingPaymentId.
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: alreadyVoidedPayment.id, obj: alreadyVoidedPayment }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(alreadyVoidedPayment);
+      const updatePayment = jest
+        .spyOn(DefaultPaymentService.prototype, 'updatePayment')
+        .mockResolvedValue(updatePaymentResultOk);
+
+      let holdCalls = 0;
+      let voidCalls = 0;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+          holdCalls += 1;
+          if (holdCalls === 1) {
+            return HttpResponse.json(
+              { error: 'cart already has an open reservation', existingPaymentId: alreadyVoidedPayment.id },
+              { status: 409 },
+            );
+          }
+          return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => {
+          voidCalls += 1;
+          return HttpResponse.json({ paymentId: alreadyVoidedPayment.id, points: 2000, balance: 2000 });
+        }),
+      );
+
+      await mockGiftCardService.redeem(redeemOpts);
+
+      expect(holdCalls).toBe(2);
+      expect(voidCalls).toBe(1);
+      // The only updatePayment call is the final Charge on the new redemption - no Refund was
+      // written again for the already-reverted payment.
+      expect(updatePayment).toHaveBeenCalledTimes(1);
+      expect(updatePayment).toHaveBeenCalledWith({
+        id: createPaymentResultOk.id,
+        transaction: { type: 'Charge', amount: createPaymentResultOk.amountPlanned, state: 'Success' },
+      });
+    });
+
     test('writes no transaction when the points are not sufficient', async () => {
       setupLoyaltyConfig();
       jest

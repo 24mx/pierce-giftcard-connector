@@ -364,11 +364,36 @@ export class MockGiftCardService extends AbstractGiftCardService {
 
   private async voidConflictingHold(paymentId: string): Promise<void> {
     const stalePayment = await this.ctPaymentService.getPayment({ id: paymentId });
+
+    if (!this.isOpenGiftCardPayment(stalePayment)) {
+      // Already reverted on the CT side - most likely by voidStaleGiftCardPayments earlier in this
+      // very redeem() call, whose own voidHold silently failed (see the catch there). The coverage
+      // is already gone, so writing a second Refund transaction would be wrong; only the backend's
+      // hold itself still needs closing.
+      await this.closeConflictingHoldOnly(stalePayment.id);
+      return;
+    }
+
     await this.revertCoverageAndCloseHold({
       payment: stalePayment,
       amount: stalePayment.amountPlanned,
       action: 'voidOnHoldConflict',
     });
+  }
+
+  private async closeConflictingHoldOnly(paymentId: string): Promise<void> {
+    try {
+      await LoyaltyAPI().voidHold({ paymentId });
+    } catch (e) {
+      log.error(
+        `Could not release the loyalty reservation on retry: the points stay debited until the backend's sweep recovers them at TTL.`,
+        {
+          paymentId,
+          action: 'voidOnHoldConflict',
+          error: e instanceof LoyaltyApiError ? e.message : String(e),
+        },
+      );
+    }
   }
 
   /**
