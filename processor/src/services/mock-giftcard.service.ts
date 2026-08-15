@@ -228,23 +228,38 @@ export class MockGiftCardService extends AbstractGiftCardService {
       paymentId: ctPayment.id,
     });
 
+    const holdRequest = {
+      userId,
+      paymentId: ctPayment.id,
+      cartId: ctCart.id,
+      amount: redeemAmount,
+      // Off the cart we just read, so the backend can enforce the EUR 1 card floor itself rather
+      // than trusting the amount the checkout SDK handed us.
+      cartTotal: {
+        centAmount: ctCart.totalPrice.centAmount,
+        currencyCode: ctCart.totalPrice.currencyCode,
+      },
+    };
+
     try {
-      await LoyaltyAPI().hold({
-        userId,
-        paymentId: ctPayment.id,
-        cartId: ctCart.id,
-        amount: redeemAmount,
-        // Off the cart we just read, so the backend can enforce the EUR 1 card floor itself rather
-        // than trusting the amount the checkout SDK handed us.
-        cartTotal: {
-          centAmount: ctCart.totalPrice.centAmount,
-          currencyCode: ctCart.totalPrice.currencyCode,
-        },
-      });
+      await LoyaltyAPI().hold(holdRequest);
     } catch (e) {
-      // Includes an uncertain hold (timeout, 5xx): leaving the payment transaction-less is the only
-      // outcome we can recover from, so never write the transaction here.
-      throw this.toConnectorError(e);
+      // The backend enforces at most one open hold per cart. This is the backstop for what
+      // voidStaleGiftCardPayments above cannot see - a genuinely concurrent redeem on the same cart,
+      // or its own voidHold call having silently failed - so retry exactly once after closing the
+      // specific payment the backend named as the conflict.
+      if (this.isCartAlreadyHeldConflict(e)) {
+        await this.voidConflictingHold(e.body.existingPaymentId);
+        try {
+          await LoyaltyAPI().hold(holdRequest);
+        } catch (retryError) {
+          throw this.toConnectorError(retryError);
+        }
+      } else {
+        // Includes an uncertain hold (timeout, 5xx): leaving the payment transaction-less is the only
+        // outcome we can recover from, so never write the transaction here.
+        throw this.toConnectorError(e);
+      }
     }
 
     await this.ctPaymentService.updatePayment({
@@ -341,6 +356,19 @@ export class MockGiftCardService extends AbstractGiftCardService {
         action: 'voidStaleOnRedeem',
       });
     }
+  }
+
+  private isCartAlreadyHeldConflict(e: unknown): e is LoyaltyApiError & { body: { existingPaymentId: string } } {
+    return e instanceof LoyaltyApiError && e.status === 409 && !!e.body?.existingPaymentId;
+  }
+
+  private async voidConflictingHold(paymentId: string): Promise<void> {
+    const stalePayment = await this.ctPaymentService.getPayment({ id: paymentId });
+    await this.revertCoverageAndCloseHold({
+      payment: stalePayment,
+      amount: stalePayment.amountPlanned,
+      action: 'voidOnHoldConflict',
+    });
   }
 
   /**

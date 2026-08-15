@@ -560,6 +560,91 @@ describe('mock-giftcard.service', () => {
       });
     });
 
+    test('voids the conflicting hold named by a 409 and retries once', async () => {
+      setupLoyaltyConfig();
+      const conflictingPayment = openGiftCardPaymentFixture({ id: 'other-tab-payment' });
+      const cart = getCartWithCustomerEmail('demo@example.com');
+      const callOrder: string[] = [];
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(conflictingPayment);
+      jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockImplementation(async (opts) => {
+        callOrder.push(`updatePayment:${opts.id}:${opts.transaction.type}`);
+        return updatePaymentResultOk;
+      });
+
+      let holdCalls = 0;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+          holdCalls += 1;
+          callOrder.push(`hold${holdCalls}`);
+          if (holdCalls === 1) {
+            return HttpResponse.json(
+              { error: 'cart already has an open reservation', existingPaymentId: conflictingPayment.id },
+              { status: 409 },
+            );
+          }
+          return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async () => {
+          callOrder.push('void');
+          return HttpResponse.json({ paymentId: conflictingPayment.id, points: 2000, balance: 2000 });
+        }),
+      );
+
+      const result = await mockGiftCardService.redeem(redeemOpts);
+
+      expect(callOrder).toStrictEqual([
+        'hold1',
+        `updatePayment:${conflictingPayment.id}:Refund`,
+        'void',
+        'hold2',
+        `updatePayment:${createPaymentResultOk.id}:Charge`,
+      ]);
+      expect(result).toStrictEqual({
+        result: 'Success',
+        paymentReference: createPaymentResultOk.id,
+        redemptionId: createPaymentResultOk.id,
+      });
+    });
+
+    test('fails after exactly one retry when the conflict repeats', async () => {
+      setupLoyaltyConfig();
+      const conflictingPayment = openGiftCardPaymentFixture({ id: 'other-tab-payment' });
+      const cart = getCartWithCustomerEmail('demo@example.com');
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(conflictingPayment);
+      const updatePayment = jest
+        .spyOn(DefaultPaymentService.prototype, 'updatePayment')
+        .mockResolvedValue(updatePaymentResultOk);
+
+      let holdCalls = 0;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+          holdCalls += 1;
+          return HttpResponse.json(
+            { error: 'cart already has an open reservation', existingPaymentId: conflictingPayment.id },
+            { status: 409 },
+          );
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () =>
+          HttpResponse.json({ paymentId: conflictingPayment.id, points: 2000, balance: 2000 }),
+        ),
+      );
+
+      const result = mockGiftCardService.redeem(redeemOpts);
+
+      await expect(result).rejects.toThrow(MockCustomError);
+      expect(holdCalls).toBe(2);
+      // Only the Refund on the conflicting payment — no Charge was ever written for a new payment.
+      expect(updatePayment).toHaveBeenCalledTimes(1);
+    });
+
     test('writes no transaction when the points are not sufficient', async () => {
       setupLoyaltyConfig();
       jest
