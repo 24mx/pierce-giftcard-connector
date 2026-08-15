@@ -1,3 +1,5 @@
+import { LoyaltyErrorResponse } from '../clients/types/loyalty.client.type';
+
 /**
  * Raised whenever a call to the loyalty backend does not end in a 2xx response.
  *
@@ -8,10 +10,12 @@
  */
 export class LoyaltyApiError extends Error {
   public readonly status: number;
+  public readonly body?: LoyaltyErrorResponse;
 
-  constructor(opts: { status: number; message: string; cause?: unknown }) {
+  constructor(opts: { status: number; message: string; body?: LoyaltyErrorResponse; cause?: unknown }) {
     super(opts.message, { cause: opts.cause });
     this.name = 'LoyaltyApiError';
     this.status = opts.status;
+    this.body = opts.body;
   }
 }

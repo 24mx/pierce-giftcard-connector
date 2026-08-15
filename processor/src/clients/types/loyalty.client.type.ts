@@ -41,4 +41,6 @@ export type LoyaltyVoidRequest = {
 /** Error body returned by the loyalty backend for every non-2xx response. */
 export type LoyaltyErrorResponse = {
   error?: string;
+  /** Present only on the /hold 409 for "this cart already has a different open reservation". */
+  existingPaymentId?: string;
 };

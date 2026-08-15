@@ -95,21 +95,22 @@ export class LoyaltyClient {
     }
 
     if (!response.ok) {
+      const body = await this.readErrorBody(response);
       throw new LoyaltyApiError({
         status: response.status,
-        message: await this.readErrorMessage(response),
+        message: body?.error || `loyalty backend responded with ${response.status}`,
+        body,
       });
     }
 
     return (await response.json()) as T;
   }
 
-  private async readErrorMessage(response: Response): Promise<string> {
+  private async readErrorBody(response: Response): Promise<LoyaltyErrorResponse | undefined> {
     try {
-      const body = (await response.json()) as LoyaltyErrorResponse;
-      return body?.error || `loyalty backend responded with ${response.status}`;
+      return (await response.json()) as LoyaltyErrorResponse;
     } catch {
-      return `loyalty backend responded with ${response.status}`;
+      return undefined;
     }
   }
 }
