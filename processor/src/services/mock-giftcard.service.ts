@@ -241,23 +241,61 @@ export class MockGiftCardService extends AbstractGiftCardService {
       },
     };
 
+    // Payment ids already known to THIS call, from the very cart snapshot read at the top of
+    // redeem() (the same snapshot voidStaleGiftCardPayments already used). `.id` is enough here -
+    // no need for the reference to be expanded.
+    const knownPaymentIds = new Set(
+      (ctCart.paymentInfo?.payments ?? []).map((paymentReference) => paymentReference.id),
+    );
+
     try {
       await LoyaltyAPI().hold(holdRequest);
     } catch (e) {
-      // The backend enforces at most one open hold per cart. This is the backstop for what
-      // voidStaleGiftCardPayments above cannot see - a genuinely concurrent redeem on the same cart,
-      // or its own voidHold call having silently failed - so retry exactly once after closing the
-      // specific payment the backend named as the conflict.
-      if (this.isCartAlreadyHeldConflict(e)) {
-        await this.voidConflictingHold(e.body.existingPaymentId);
+      // The backend enforces at most one open hold per cart. A 409's `existingPaymentId` can arise
+      // two different ways, and only one of them is safe to auto-heal:
+      //
+      //   1. The named payment was ALREADY in our own cart snapshot. That means
+      //      voidStaleGiftCardPayments, earlier in this very call, already tried and failed to close
+      //      it (its own voidHold call silently failed - see the catch there) - genuinely stale, and
+      //      safe to finish closing before retrying.
+      //   2. The named payment was NOT in our snapshot. The only way it can exist now is a
+      //      genuinely concurrent OTHER redeem() call that created it AFTER we read our snapshot -
+      //      i.e. two redeem() calls racing on the same cart, where the other call's hold() has
+      //      already succeeded. We have no evidence that payment is stale, and reverting it would
+      //      undo someone else's currently-succeeding redemption. Fail cleanly instead of touching
+      //      it: the caller can retry from scratch, re-reading the cart and seeing the true state.
+      if (this.isCartAlreadyHeldConflict(e) && knownPaymentIds.has(e.body.existingPaymentId)) {
+        try {
+          await this.voidConflictingHold(e.body.existingPaymentId);
+        } catch (revertError) {
+          log.error('Could not close the conflicting hold; failing the redemption.', {
+            paymentId: e.body.existingPaymentId,
+            action: 'voidOnHoldConflict',
+            error: revertError instanceof Error ? revertError.message : String(revertError),
+          });
+          throw this.toConnectorError(e); // fall back to the original conflict error
+        }
+
         try {
           await LoyaltyAPI().hold(holdRequest);
         } catch (retryError) {
+          if (this.isCartAlreadyHeldConflict(retryError)) {
+            // Distinguishable from a plain insufficient-funds 409: the retry hit a conflict again,
+            // not a balance problem, so toConnectorError's blanket 409->InsufficientFunds mapping
+            // would mislead here.
+            throw new MockCustomError({
+              message: 'the cart still has a conflicting reservation after one retry',
+              code: 409,
+              key: 'CartAlreadyHeld',
+            });
+          }
           throw this.toConnectorError(retryError);
         }
       } else {
-        // Includes an uncertain hold (timeout, 5xx): leaving the payment transaction-less is the only
-        // outcome we can recover from, so never write the transaction here.
+        // Includes an uncertain hold (timeout, 5xx), a conflict naming a payment outside our own
+        // snapshot (case 2 above), and a plain insufficient-funds 409: leaving the payment
+        // transaction-less is the only outcome we can recover from, so never write the transaction
+        // here.
         throw this.toConnectorError(e);
       }
     }
@@ -382,14 +420,35 @@ export class MockGiftCardService extends AbstractGiftCardService {
   }
 
   private async closeConflictingHoldOnly(paymentId: string): Promise<void> {
+    const action = 'voidOnHoldConflict';
+
+    log.info(`Processing payment modification.`, { paymentId, action });
+
+    await this.closeHold(paymentId, action);
+
+    log.info(`Payment modification completed.`, {
+      paymentId,
+      action,
+      result: PaymentModificationStatus.APPROVED,
+    });
+  }
+
+  /**
+   * Closes the loyalty backend's hold for a payment. A failure here is swallowed rather than
+   * thrown - the coverage side (the Refund transaction, if any) has already been decided by the
+   * caller, and re-running this would not help; the loyalty backend's reconciliation sweep
+   * recovers the points at TTL. That is a delay measured in TTLs, not a non-event, so it is logged
+   * as an error rather than a warning.
+   */
+  private async closeHold(paymentId: string, action: string): Promise<void> {
     try {
       await LoyaltyAPI().voidHold({ paymentId });
     } catch (e) {
       log.error(
-        `Could not release the loyalty reservation on retry: the points stay debited until the backend's sweep recovers them at TTL.`,
+        `Could not release the loyalty reservation: the points stay debited until the backend's sweep recovers them at TTL.`,
         {
           paymentId,
-          action: 'voidOnHoldConflict',
+          action,
           error: e instanceof LoyaltyApiError ? e.message : String(e),
         },
       );
@@ -458,18 +517,7 @@ export class MockGiftCardService extends AbstractGiftCardService {
       },
     });
 
-    try {
-      await LoyaltyAPI().voidHold({ paymentId: opts.payment.id });
-    } catch (e) {
-      log.error(
-        `Could not release the loyalty reservation: the points stay debited until the backend's sweep recovers them at TTL.`,
-        {
-          paymentId: opts.payment.id,
-          action: opts.action,
-          error: e instanceof LoyaltyApiError ? e.message : String(e),
-        },
-      );
-    }
+    await this.closeHold(opts.payment.id, opts.action);
 
     log.info(`Payment modification completed.`, {
       paymentId: opts.payment.id,

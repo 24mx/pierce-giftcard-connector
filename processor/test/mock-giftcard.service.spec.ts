@@ -21,6 +21,7 @@ import {
 
 import { HealthCheckResult } from '@commercetools/connect-payments-sdk';
 import { AbstractGiftCardService } from '../src/services/abstract-giftcard.service';
+import { log } from '../src/libs/logger';
 
 interface FlexibleConfig {
   [key: string]: string | number | boolean | undefined; // Adjust the type according to your config values
@@ -563,7 +564,14 @@ describe('mock-giftcard.service', () => {
     test('voids the conflicting hold named by a 409 and retries once', async () => {
       setupLoyaltyConfig();
       const conflictingPayment = openGiftCardPaymentFixture({ id: 'other-tab-payment' });
-      const cart = getCartWithCustomerEmail('demo@example.com');
+      // The conflicting payment's id must be in OUR OWN cart snapshot for the revert-and-retry gate
+      // to allow the revert - only the id matters for that check (no `.obj` here), so
+      // voidStaleGiftCardPayments (which needs the expanded `.obj` to act) does not touch it upfront,
+      // keeping this test focused on the conflict-retry mechanic. See the concurrent-request test
+      // below for the case where the id is NOT in our snapshot at all, which must NOT be reverted.
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: conflictingPayment.id }] },
+      });
       const callOrder: string[] = [];
 
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
@@ -576,10 +584,12 @@ describe('mock-giftcard.service', () => {
       });
 
       let holdCalls = 0;
+      const holdBodies: unknown[] = [];
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
           holdCalls += 1;
           callOrder.push(`hold${holdCalls}`);
+          holdBodies.push(await request.json());
           if (holdCalls === 1) {
             return HttpResponse.json(
               { error: 'cart already has an open reservation', existingPaymentId: conflictingPayment.id },
@@ -603,6 +613,9 @@ describe('mock-giftcard.service', () => {
         'hold2',
         `updatePayment:${createPaymentResultOk.id}:Charge`,
       ]);
+      // The retried hold reuses the exact same hoisted holdRequest - nothing was recomputed or
+      // mutated between the first attempt and the retry.
+      expect(holdBodies[1]).toStrictEqual(holdBodies[0]);
       expect(result).toStrictEqual({
         result: 'Success',
         paymentReference: createPaymentResultOk.id,
@@ -610,10 +623,137 @@ describe('mock-giftcard.service', () => {
       });
     });
 
+    test('does not revert a conflicting payment that was never in our own cart snapshot, since it must belong to a genuinely concurrent redeem() call', async () => {
+      setupLoyaltyConfig();
+      // The cart snapshot THIS redeem() call read carries no paymentInfo at all - the named
+      // existingPaymentId is not, and cannot be, one of ours. The only way it can exist is another
+      // redeem() call that created it after we took our snapshot, and whose hold is currently
+      // succeeding - reverting it would undo somebody else's legitimate redemption.
+      const concurrentlyCreatedPayment = openGiftCardPaymentFixture({ id: 'concurrent-other-tab-payment' });
+      const cart = getCartWithCustomerEmail('demo@example.com');
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      const getPayment = jest.spyOn(DefaultPaymentService.prototype, 'getPayment');
+      const updatePayment = jest.spyOn(DefaultPaymentService.prototype, 'updatePayment');
+
+      let holdCalls = 0;
+      let voidCalls = 0;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+          holdCalls += 1;
+          return HttpResponse.json(
+            { error: 'cart already has an open reservation', existingPaymentId: concurrentlyCreatedPayment.id },
+            { status: 409 },
+          );
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => {
+          voidCalls += 1;
+          return HttpResponse.json({ paymentId: concurrentlyCreatedPayment.id, points: 2000, balance: 2000 });
+        }),
+      );
+
+      const result = mockGiftCardService.redeem(redeemOpts);
+
+      await expect(result).rejects.toThrow(MockCustomError);
+      // Today's toConnectorError mapping for a plain 409 is InsufficientFunds - not accurate to the
+      // real cause here, but no more misleading than before this fix, and changing that generic
+      // mapping is out of scope for the concurrency gate this test locks in.
+      await expect(result).rejects.toMatchObject({ code: 'InsufficientFunds' });
+      expect(holdCalls).toBe(1);
+      expect(voidCalls).toBe(0);
+      expect(getPayment).not.toHaveBeenCalled();
+      expect(updatePayment).not.toHaveBeenCalled();
+    });
+
+    test('logs and falls back to the original conflict error when getPayment fails inside the conflict-revert path', async () => {
+      setupLoyaltyConfig();
+      const conflictingPayment = openGiftCardPaymentFixture({ id: 'other-tab-payment' });
+      // The id is present in our own cart snapshot, so the gate lets the revert proceed - but with
+      // no `.obj`, voidStaleGiftCardPayments does not act on it upfront, so the only relevant call
+      // to getPayment is the one inside the conflict-revert path (voidConflictingHold), which fails
+      // (e.g. a transient CT 5xx, or the payment was deleted).
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: conflictingPayment.id }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockRejectedValue(new Error('CT is unavailable'));
+      const updatePayment = jest.spyOn(DefaultPaymentService.prototype, 'updatePayment');
+      const logErrorSpy = jest.spyOn(log, 'error');
+
+      let holdCalls = 0;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+          holdCalls += 1;
+          return HttpResponse.json(
+            { error: 'cart already has an open reservation', existingPaymentId: conflictingPayment.id },
+            { status: 409 },
+          );
+        }),
+      );
+
+      const result = mockGiftCardService.redeem(redeemOpts);
+
+      await expect(result).rejects.toThrow(MockCustomError);
+      // The ORIGINAL conflict's mapping (InsufficientFunds, today's blanket 409 mapping) - not a raw,
+      // unmapped exception from getPayment.
+      await expect(result).rejects.toMatchObject({ code: 'InsufficientFunds' });
+      expect(holdCalls).toBe(1);
+      expect(updatePayment).not.toHaveBeenCalled();
+      expect(logErrorSpy).toHaveBeenCalledWith(
+        'Could not close the conflicting hold; failing the redemption.',
+        expect.objectContaining({ paymentId: conflictingPayment.id, action: 'voidOnHoldConflict' }),
+      );
+    });
+
+    test('maps a repeated conflict on the retried hold to CartAlreadyHeld, not InsufficientFunds', async () => {
+      setupLoyaltyConfig();
+      const conflictingPayment = openGiftCardPaymentFixture({ id: 'other-tab-payment' });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: conflictingPayment.id, obj: conflictingPayment }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(conflictingPayment);
+      jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
+
+      let holdCalls = 0;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+          holdCalls += 1;
+          // Both attempts name the same conflicting payment - a still-conflicting cart on retry,
+          // not a balance problem.
+          return HttpResponse.json(
+            { error: 'cart already has an open reservation', existingPaymentId: conflictingPayment.id },
+            { status: 409 },
+          );
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () =>
+          HttpResponse.json({ paymentId: conflictingPayment.id, points: 2000, balance: 2000 }),
+        ),
+      );
+
+      const result = mockGiftCardService.redeem(redeemOpts);
+
+      await expect(result).rejects.toThrow(MockCustomError);
+      await expect(result).rejects.toMatchObject({ code: 'CartAlreadyHeld', httpErrorStatus: 409 });
+      expect(holdCalls).toBe(2);
+    });
+
     test('fails after exactly one retry when the conflict repeats', async () => {
       setupLoyaltyConfig();
       const conflictingPayment = openGiftCardPaymentFixture({ id: 'other-tab-payment' });
-      const cart = getCartWithCustomerEmail('demo@example.com');
+      // The id is in our own cart snapshot (gate allows the revert-and-retry to proceed at all), but
+      // with no `.obj` so voidStaleGiftCardPayments does not act on it upfront.
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: conflictingPayment.id }] },
+      });
 
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
