@@ -156,7 +156,10 @@ const awaitPreview = async () => {
           console.log(`         ${entry.message}`);
         }
       }
-      return current.isPreviewable === true;
+      // A string, not a boolean: the field carries "true" / "false" / "pending", and comparing it
+      // against `true` made every preview report failure — `just release` died here each time,
+      // after a build that had actually succeeded, and never reached publish.
+      return String(current.isPreviewable) === 'true';
     }
     process.stdout.write(attempt === 0 ? '   building' : '.');
     await new Promise((r) => setTimeout(r, 15_000));
