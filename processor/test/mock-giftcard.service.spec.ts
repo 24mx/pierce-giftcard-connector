@@ -160,7 +160,74 @@ describe('mock-giftcard.service', () => {
         status: { state: 'Valid' },
         amount: { centAmount: 2600, currencyCode: 'EUR' },
         points: 2600,
+        openRedemptionId: null,
       });
+    });
+
+    test('reports the id of an already-open giftcard payment on the cart', async () => {
+      setupLoyaltyConfig();
+      const openPayment = openGiftCardPaymentFixture({ id: 'already-open-giftcard-payment' });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(
+        getCartWithCustomerEmail('demo@example.com', {
+          paymentInfo: { payments: [{ typeId: 'payment', id: openPayment.id, obj: openPayment }] },
+        }),
+      );
+      // getPaymentAmount's real SDK implementation would otherwise fetch each attached payment by
+      // id from the live commercetools API to net out what is already paid - irrelevant to what
+      // this test is checking, so it is stubbed directly instead of mocking that network call.
+      jest
+        .spyOn(DefaultCartService.prototype, 'getPaymentAmount')
+        .mockResolvedValue({ currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 });
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+          HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 2600,
+            amount: { centAmount: 2600, currencyCode: 'EUR' },
+          }),
+        ),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(result.openRedemptionId).toStrictEqual('already-open-giftcard-payment');
+    });
+
+    test('reports openRedemptionId null when the cart only carries an already-refunded giftcard payment', async () => {
+      setupLoyaltyConfig();
+      const refundedPayment = openGiftCardPaymentFixture({
+        id: 'refunded-giftcard-payment',
+        transactions: [
+          {
+            id: 'REFUND_TXN',
+            type: 'Refund',
+            amount: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 2000, fractionDigits: 2 },
+            interactionId: 'REFUND_TXN',
+            state: 'Success',
+          },
+        ],
+      });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(
+        getCartWithCustomerEmail('demo@example.com', {
+          paymentInfo: { payments: [{ typeId: 'payment', id: refundedPayment.id, obj: refundedPayment }] },
+        }),
+      );
+      jest
+        .spyOn(DefaultCartService.prototype, 'getPaymentAmount')
+        .mockResolvedValue({ currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 });
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+          HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 2600,
+            amount: { centAmount: 2600, currencyCode: 'EUR' },
+          }),
+        ),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(result.openRedemptionId).toBeNull();
     });
 
     // The checkout SDK spends min(reported balance, cart total), so reporting the whole balance is
@@ -194,6 +261,7 @@ describe('mock-giftcard.service', () => {
         status: { state: 'Valid' },
         amount: { centAmount: expectedCents, currencyCode: 'EUR' },
         points: 2600,
+        openRedemptionId: null,
       });
     });
 

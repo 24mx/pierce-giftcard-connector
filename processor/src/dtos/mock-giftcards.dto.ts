@@ -15,6 +15,10 @@ export const BalanceResponseSchema = Type.Object({
   status: StatusSchema,
   amount: AmountSchema,
   points: Type.Number(),
+  // The CT Payment id of an already-open giftcard redemption on this cart, if one exists - null
+  // otherwise. Lets a caller reconstruct "a redemption is active" state after losing it client-side
+  // (e.g. a page refresh mid-checkout), without guessing at commercetools payment internals itself.
+  openRedemptionId: Type.Union([Type.String(), Type.Null()]),
 });
 
 export const RedeemRequestSchema = Type.Object({

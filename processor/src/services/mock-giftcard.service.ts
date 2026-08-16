@@ -130,9 +130,11 @@ export class MockGiftCardService extends AbstractGiftCardService {
   async balance(code: string): Promise<BalanceResponseSchemaDTO> {
     const ctCart = await this.ctCartService.getCart({
       id: getCartIdFromContext(),
+      expand: ['paymentInfo.payments[*]'],
     });
     const amountPlanned = await this.ctCartService.getPaymentAmount({ cart: ctCart });
     const userId = this.getLoyaltyUserId(ctCart);
+    const openRedemptionId = this.findOpenGiftCardPayments(ctCart)[0]?.id ?? null;
 
     try {
       const balanceResult = await LoyaltyAPI().balance({
@@ -140,7 +142,7 @@ export class MockGiftCardService extends AbstractGiftCardService {
         currencyCode: amountPlanned.currencyCode,
       });
 
-      const balance = this.balanceConverter.convert(balanceResult);
+      const balance = this.balanceConverter.convert(balanceResult, openRedemptionId);
       return this.capToRequestedAmount(balance, code, amountPlanned.currencyCode);
     } catch (e) {
       throw this.toConnectorError(e);
@@ -390,12 +392,14 @@ export class MockGiftCardService extends AbstractGiftCardService {
     );
   }
 
-  private async voidStaleGiftCardPayments(ctCart: Cart): Promise<void> {
-    const stalePayments = (ctCart.paymentInfo?.payments ?? [])
+  private findOpenGiftCardPayments(cart: Cart): Payment[] {
+    return (cart.paymentInfo?.payments ?? [])
       .map((paymentReference) => paymentReference.obj)
       .filter((payment): payment is Payment => !!payment && this.isOpenGiftCardPayment(payment));
+  }
 
-    for (const stalePayment of stalePayments) {
+  private async voidStaleGiftCardPayments(ctCart: Cart): Promise<void> {
+    for (const stalePayment of this.findOpenGiftCardPayments(ctCart)) {
       await this.revertCoverageAndCloseHold({
         payment: stalePayment,
         amount: stalePayment.amountPlanned,
