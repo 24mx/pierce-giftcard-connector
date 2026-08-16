@@ -22,6 +22,7 @@ import { getConfig } from '../config/config';
 import { appLogger, paymentSDK } from '../payment-sdk';
 import { AbstractGiftCardService } from './abstract-giftcard.service';
 import { LoyaltyAPI } from '../clients/loyalty.client';
+import { LoyaltyHoldResponse } from '../clients/types/loyalty.client.type';
 import { LoyaltyApiError } from '../errors/loyalty-api.error';
 import { getCartIdFromContext, getPaymentInterfaceFromContext } from '../libs/fastify/context/context';
 import { BalanceResponseSchemaDTO, RedeemResponseDTO } from '../dtos/mock-giftcards.dto';
@@ -149,6 +150,11 @@ export class MockGiftCardService extends AbstractGiftCardService {
   /**
    * Lowers the reported balance to what the code asks for. Never raises it: the shopper cannot
    * spend points they do not have, whatever the code says.
+   *
+   * `points` is left uncapped here: the connector holds no points<->money rate (only the loyalty
+   * backend does), so there is nothing to recompute it from. Harmless in practice - this path only
+   * fires for the widget's own `Valid-<amount>-<CCY>` sample codes; the real checkout flow always
+   * calls with `code: ''` and never hits this branch.
    */
   private capToRequestedAmount(
     balance: BalanceResponseSchemaDTO,
@@ -248,8 +254,10 @@ export class MockGiftCardService extends AbstractGiftCardService {
       (ctCart.paymentInfo?.payments ?? []).map((paymentReference) => paymentReference.id),
     );
 
+    let holdResult: LoyaltyHoldResponse;
+
     try {
-      await LoyaltyAPI().hold(holdRequest);
+      holdResult = await LoyaltyAPI().hold(holdRequest);
     } catch (e) {
       // The backend enforces at most one open hold per cart. A 409's `existingPaymentId` can arise
       // two different ways, and only one of them is safe to auto-heal:
@@ -277,7 +285,7 @@ export class MockGiftCardService extends AbstractGiftCardService {
         }
 
         try {
-          await LoyaltyAPI().hold(holdRequest);
+          holdResult = await LoyaltyAPI().hold(holdRequest);
         } catch (retryError) {
           if (this.isCartAlreadyHeldConflict(retryError)) {
             // Distinguishable from a plain insufficient-funds 409: the retry hit a conflict again,
@@ -309,7 +317,7 @@ export class MockGiftCardService extends AbstractGiftCardService {
       },
     });
 
-    return this.redemptionConverter.convert({ payment: ctPayment });
+    return this.redemptionConverter.convert({ payment: ctPayment, hold: holdResult });
   }
 
   /**

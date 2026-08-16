@@ -159,6 +159,7 @@ describe('mock-giftcard.service', () => {
       expect(result).toStrictEqual({
         status: { state: 'Valid' },
         amount: { centAmount: 2600, currencyCode: 'EUR' },
+        points: 2600,
       });
     });
 
@@ -192,6 +193,7 @@ describe('mock-giftcard.service', () => {
       expect(result).toStrictEqual({
         status: { state: 'Valid' },
         amount: { centAmount: expectedCents, currencyCode: 'EUR' },
+        points: 2600,
       });
     });
 
@@ -288,6 +290,7 @@ describe('mock-giftcard.service', () => {
         result: 'Success',
         paymentReference: createPaymentResultOk.id,
         redemptionId: createPaymentResultOk.id,
+        points: 2400,
       });
     });
 
@@ -518,6 +521,7 @@ describe('mock-giftcard.service', () => {
         result: 'Success',
         paymentReference: createPaymentResultOk.id,
         redemptionId: createPaymentResultOk.id,
+        points: 2400,
       });
     });
 
@@ -620,6 +624,7 @@ describe('mock-giftcard.service', () => {
         result: 'Success',
         paymentReference: createPaymentResultOk.id,
         redemptionId: createPaymentResultOk.id,
+        points: 2400,
       });
     });
 

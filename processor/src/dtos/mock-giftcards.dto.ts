@@ -14,6 +14,7 @@ const StatusSchema = Type.Object({
 export const BalanceResponseSchema = Type.Object({
   status: StatusSchema,
   amount: AmountSchema,
+  points: Type.Number(),
 });
 
 export const RedeemRequestSchema = Type.Object({
@@ -25,6 +26,7 @@ export const RedeemResponseSchema = Type.Object({
   result: Type.String(),
   paymentReference: Type.String(),
   redemptionId: Type.String(),
+  points: Type.Number(),
 });
 
 export const BalanceRequestSchema = Type.Object({
