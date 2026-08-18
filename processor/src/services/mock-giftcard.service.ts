@@ -136,41 +136,29 @@ export class MockGiftCardService extends AbstractGiftCardService {
     const openRedemptionId = this.findOpenGiftCardPayments(ctCart)[0]?.id ?? null;
 
     try {
+      // amountPlanned, not ctCart.totalPrice: it is the gross figure net of whatever is already
+      // paid, which is the money this cart is still asking for and therefore the only ceiling a cap
+      // may be measured against.
       const balanceResult = await LoyaltyAPI().balance({
         userId,
         currencyCode: amountPlanned.currencyCode,
+        cartId: ctCart.id,
+        cartTotal: amountPlanned.centAmount,
       });
-      const quote = await this.getRedeemableQuote(userId, ctCart);
+      if (!balanceResult.cap) {
+        // We named a cart, so the backend owes a cap. Reporting 0 instead would be indistinguishable
+        // from a shopper with nothing left to redeem.
+        throw new MockCustomError({
+          message: 'the loyalty service did not quote a cap for this cart',
+          code: 500,
+          key: 'GenericError',
+        });
+      }
 
-      const balance = this.balanceConverter.convert(balanceResult, openRedemptionId, quote);
+      const balance = this.balanceConverter.convert(balanceResult, openRedemptionId, balanceResult.cap);
       return this.capToRequestedAmount(balance, code, amountPlanned.currencyCode);
     } catch (e) {
       throw this.toConnectorError(e);
-    }
-  }
-
-  /**
-   * The redeemable cap for this cart - capped by the shopper's balance, the cart total and the
-   * card floor, in the cart's own currency - plus the precise cents-per-point rate. cartTotal
-   * comes off the cart itself (the same way redeem()'s hold does), not from the caller.
-   *
-   * Advisory only, same as the backend's own quote() doc comment says: hold() remains the gate
-   * checked against the loyalty backend directly at redeem time. A failure here must not fail the
-   * whole balance() call over what is, for it, a secondary concern - the redemption slider simply
-   * shows nothing redeemable (`maxPoints: 0`) until the next successful read.
-   */
-  private async getRedeemableQuote(userId: string, ctCart: Cart): Promise<{ maxPoints: number; rate: number }> {
-    try {
-      const quoteResult = await LoyaltyAPI().quote({
-        userId,
-        cartId: ctCart.id,
-        cartTotal: ctCart.totalPrice.centAmount,
-        currencyCode: ctCart.totalPrice.currencyCode,
-      });
-
-      return { maxPoints: quoteResult.maxPoints, rate: quoteResult.rateToEur };
-    } catch {
-      return { maxPoints: 0, rate: 0 };
     }
   }
 

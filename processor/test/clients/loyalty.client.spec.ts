@@ -33,6 +33,7 @@ describe('loyalty.client', () => {
             userId: 'demo@example.com',
             points: 2600,
             amount: { centAmount: 2600, currencyCode: 'EUR' },
+            rateToEur: 1,
           });
         }),
       );
@@ -41,11 +42,44 @@ describe('loyalty.client', () => {
 
       expect(receivedUrl?.searchParams.get('userId')).toStrictEqual('demo@example.com');
       expect(receivedUrl?.searchParams.get('currency')).toStrictEqual('EUR');
+      // Naming no cart leaves both cart parameters off the wire entirely: the backend answers a
+      // partial pair with a 400, and reads their absence as "no cap wanted".
+      expect(receivedUrl?.searchParams.has('cartId')).toBe(false);
+      expect(receivedUrl?.searchParams.has('cartTotal')).toBe(false);
       expect(result).toStrictEqual({
         userId: 'demo@example.com',
         points: 2600,
         amount: { centAmount: 2600, currencyCode: 'EUR' },
+        rateToEur: 1,
       });
+    });
+
+    test('names the cart when one is given, so the answer carries its cap', async () => {
+      let receivedUrl: URL | undefined;
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+          receivedUrl = new URL(request.url);
+          return HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 2600,
+            amount: { centAmount: 29899, currencyCode: 'SEK' },
+            rateToEur: 11.499937,
+            cap: { maxPoints: 350, maxCents: 4024 },
+          });
+        }),
+      );
+
+      const result = await client.balance({
+        userId: 'demo@example.com',
+        currencyCode: 'SEK',
+        cartId: 'cart-1',
+        cartTotal: 5175,
+      });
+
+      expect(receivedUrl?.searchParams.get('cartId')).toStrictEqual('cart-1');
+      expect(receivedUrl?.searchParams.get('cartTotal')).toStrictEqual('5175');
+      expect(receivedUrl?.searchParams.get('currency')).toStrictEqual('SEK');
+      expect(result.cap).toStrictEqual({ maxPoints: 350, maxCents: 4024 });
     });
 
     test('throws a LoyaltyApiError carrying status and backend message on 400', async () => {
@@ -167,61 +201,6 @@ describe('loyalty.client', () => {
         status: 409,
         message: 'not enough spendable points',
       });
-    });
-  });
-
-  describe('quote', () => {
-    test('requests the redeemable cap for the given user, cart and currency', async () => {
-      let receivedUrl: URL | undefined;
-      mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, ({ request }) => {
-          receivedUrl = new URL(request.url);
-          return HttpResponse.json({
-            maxPoints: 4500,
-            maxCents: 4500,
-            spendable: 2600,
-            rateToEur: 1,
-            currency: 'EUR',
-          });
-        }),
-      );
-
-      const result = await client.quote({
-        userId: 'demo@example.com',
-        cartId: 'cart-1',
-        cartTotal: 5175,
-        currencyCode: 'SEK',
-      });
-
-      expect(receivedUrl?.searchParams.get('userId')).toStrictEqual('demo@example.com');
-      expect(receivedUrl?.searchParams.get('cartId')).toStrictEqual('cart-1');
-      expect(receivedUrl?.searchParams.get('cartTotal')).toStrictEqual('5175');
-      expect(receivedUrl?.searchParams.get('currency')).toStrictEqual('SEK');
-      expect(result).toStrictEqual({
-        maxPoints: 4500,
-        maxCents: 4500,
-        spendable: 2600,
-        rateToEur: 1,
-        currency: 'EUR',
-      });
-    });
-
-    test('throws a LoyaltyApiError on an unmapped currency', async () => {
-      mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, () =>
-          HttpResponse.json({ error: 'unsupported currency: JPY' }, { status: 400 }),
-        ),
-      );
-
-      const result = client.quote({
-        userId: 'demo@example.com',
-        cartId: 'cart-1',
-        cartTotal: 5175,
-        currencyCode: 'JPY',
-      });
-
-      await expect(result).rejects.toThrow(LoyaltyApiError);
-      await expect(result).rejects.toMatchObject({ status: 400 });
     });
   });
 

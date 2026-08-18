@@ -1,4 +1,4 @@
-import { LoyaltyBalanceResponse } from '../../clients/types/loyalty.client.type';
+import { LoyaltyBalanceResponse, LoyaltyCap } from '../../clients/types/loyalty.client.type';
 import { BalanceResponseSchemaDTO } from '../../dtos/mock-giftcards.dto';
 
 export class BalanceConverter {
@@ -7,14 +7,13 @@ export class BalanceConverter {
    * both the points and the amount are passed through untouched. Failures never reach here: they
    * surface as a LoyaltyApiError from the client and are mapped by the service.
    *
-   * `quote` is the cart-aware redeemable cap - a separate, advisory-only call the service already
-   * defaults to `{maxPoints: 0, rate: 0}` on failure, so this converter never needs to know whether
-   * it succeeded.
+   * `cap` is the same answer's cart-aware maximum. The service has already established it is there,
+   * which it always is for a request that named a cart - and this connector always does.
    */
   public convert(
     opts: LoyaltyBalanceResponse,
     openRedemptionId: string | null,
-    quote: { maxPoints: number; rate: number },
+    cap: LoyaltyCap,
   ): BalanceResponseSchemaDTO {
     return {
       status: {
@@ -26,8 +25,8 @@ export class BalanceConverter {
       },
       points: opts.points,
       openRedemptionId,
-      maxPoints: quote.maxPoints,
-      rate: quote.rate,
+      maxPoints: cap.maxPoints,
+      rate: opts.rateToEur,
     };
   }
 }

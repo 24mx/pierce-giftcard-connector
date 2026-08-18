@@ -6,12 +6,29 @@ export type LoyaltyAmount = {
 export type LoyaltyBalanceRequest = {
   userId: string;
   currencyCode: string;
+  /**
+   * Naming a cart additionally asks what that cart would accept. Both or neither: the backend
+   * answers half a pair with a 400 rather than guessing which half was meant.
+   */
+  cartId?: string;
+  /** The cart's total, in minor units of `currencyCode` — the ceiling the cap is measured against. */
+  cartTotal?: number;
+};
+
+/** The largest reservation this cart would accept, in points and in the balance's own currency. */
+export type LoyaltyCap = {
+  maxPoints: number;
+  maxCents: number;
 };
 
 export type LoyaltyBalanceResponse = {
   userId: string;
   points: number;
   amount: LoyaltyAmount;
+  /** Local currency units per 1 EUR — converts slider positions without a request per tick. */
+  rateToEur: number;
+  /** Present only when the request named a cart. See GiftcardCap in the loyalty backend. */
+  cap?: LoyaltyCap;
 };
 
 export type LoyaltyHoldRequest = {
@@ -36,23 +53,6 @@ export type LoyaltyHoldResponse = {
 
 export type LoyaltyVoidRequest = {
   paymentId: string;
-};
-
-export type LoyaltyQuoteRequest = {
-  userId: string;
-  cartId: string;
-  /** The cart's total, in minor units of `currencyCode` — the ceiling quote() measures against. */
-  cartTotal: number;
-  currencyCode: string;
-};
-
-/** A quote as the storefront reads it: see GiftcardQuoteResponse in the loyalty backend. */
-export type LoyaltyQuoteResponse = {
-  maxPoints: number;
-  maxCents: number;
-  spendable: number;
-  rateToEur: number;
-  currency: string;
 };
 
 /** Error body returned by the loyalty backend for every non-2xx response. */

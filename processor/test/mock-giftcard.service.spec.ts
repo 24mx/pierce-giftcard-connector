@@ -129,23 +129,21 @@ describe('mock-giftcard.service', () => {
   });
 
   describe('balance', () => {
-    // Every balance() call now also asks for a quote - registered by default here so tests that
-    // don't care about it don't have to; tests that do override with mockServer.use() afterwards.
     const setupLoyaltyConfig = () => {
       // no currency key on purpose: balance() takes the currency from the cart
       setupMockConfig({ loyaltyApiUrl: LOYALTY_URL, loyaltyTimeoutMs: 5000 });
-      mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, () =>
-          HttpResponse.json({
-            maxPoints: 2600,
-            maxCents: 2600,
-            spendable: 2600,
-            rateToEur: 1,
-            currency: 'EUR',
-          }),
-        ),
-      );
     };
+
+    // One call now carries the spendable balance AND the cart's cap, so every mock owes the whole
+    // shape - the connector always names a cart, so the cap is never legitimately absent.
+    const balanceBody = (overrides: Record<string, unknown> = {}) => ({
+      userId: 'demo@example.com',
+      points: 2600,
+      amount: { centAmount: 2600, currencyCode: 'EUR' },
+      rateToEur: 1,
+      cap: { maxPoints: 2600, maxCents: 2600 },
+      ...overrides,
+    });
 
     test('asks the loyalty backend for the spendable points of the cart customer, in the cart currency', async () => {
       setupLoyaltyConfig();
@@ -157,11 +155,7 @@ describe('mock-giftcard.service', () => {
       mockServer.use(
         http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
           receivedUrl = new URL(request.url);
-          return HttpResponse.json({
-            userId: 'demo@example.com',
-            points: 2600,
-            amount: { centAmount: 2600, currencyCode: 'EUR' },
-          });
+          return HttpResponse.json(balanceBody());
         }),
       );
 
@@ -180,31 +174,16 @@ describe('mock-giftcard.service', () => {
       });
     });
 
-    test('asks the loyalty backend for the redeemable cap of the cart, in the cart currency', async () => {
+    test('asks for the cart cap in the same call and reports it', async () => {
       setupLoyaltyConfig();
       const cart = getCartWithCustomerEmail('demo@example.com');
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
-      mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
-          HttpResponse.json({
-            userId: 'demo@example.com',
-            points: 2600,
-            amount: { centAmount: 2600, currencyCode: 'EUR' },
-          }),
-        ),
-      );
 
       let receivedUrl: URL | undefined;
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
           receivedUrl = new URL(request.url);
-          return HttpResponse.json({
-            maxPoints: 100,
-            maxCents: 497,
-            spendable: 2600,
-            rateToEur: 4.970006,
-            currency: 'EUR',
-          });
+          return HttpResponse.json(balanceBody({ rateToEur: 4.970006, cap: { maxPoints: 100, maxCents: 497 } }));
         }),
       );
 
@@ -212,16 +191,43 @@ describe('mock-giftcard.service', () => {
 
       expect(receivedUrl?.searchParams.get('userId')).toStrictEqual('demo@example.com');
       expect(receivedUrl?.searchParams.get('cartId')).toStrictEqual(cart.id);
-      expect(receivedUrl?.searchParams.get('cartTotal')).toStrictEqual(String(cart.totalPrice.centAmount));
-      expect(receivedUrl?.searchParams.get('currency')).toStrictEqual(cart.totalPrice.currencyCode);
-      // spendable is not surfaced on the balance response - `points` already reports it.
+      expect(receivedUrl?.searchParams.get('currency')).toStrictEqual('EUR');
+      // spendable is not surfaced separately - `points` already reports it.
       expect(result).toMatchObject({ maxPoints: 100, rate: 4.970006 });
     });
 
-    // Advisory only: hold() remains the gate checked against the loyalty backend directly at
-    // redeem time, so a broken quote call must not fail the whole balance() read - the redemption
-    // slider just shows nothing redeemable until the next successful read.
-    test('defaults maxPoints/rate to 0 when the quote call fails, without failing balance() itself', async () => {
+    // getPaymentAmount prefers taxedPrice.totalGross and subtracts what is already paid; totalPrice
+    // is neither. Measuring the cap against the raw total would offer points against money the
+    // shopper is not being asked for, and hold() would then refuse the maximum the slider showed.
+    test('measures the cap against the amount actually payable, not the raw cart total', async () => {
+      setupLoyaltyConfig();
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        taxedPrice: {
+          totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 },
+          totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 6150, fractionDigits: 2 },
+          taxPortions: [],
+        },
+      });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+
+      let receivedUrl: URL | undefined;
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+          receivedUrl = new URL(request.url);
+          return HttpResponse.json(balanceBody());
+        }),
+      );
+
+      await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(receivedUrl?.searchParams.get('cartTotal')).toStrictEqual('6150');
+      expect(receivedUrl?.searchParams.get('cartId')).toStrictEqual(cart.id);
+    });
+
+    // The connector always names a cart, so an answer without a cap is the backend breaking its
+    // contract - not a shopper with nothing left to redeem. Reporting 0 would make those two
+    // indistinguishable, which is the ambiguity that merging the two calls set out to remove.
+    test('fails when the backend answers without a cap', async () => {
       setupLoyaltyConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
@@ -232,14 +238,14 @@ describe('mock-giftcard.service', () => {
             userId: 'demo@example.com',
             points: 2600,
             amount: { centAmount: 2600, currencyCode: 'EUR' },
+            rateToEur: 1,
           }),
         ),
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
       );
 
-      const result = await mockGiftCardService.balance('code-from-the-widget');
+      const result = mockGiftCardService.balance('code-from-the-widget');
 
-      expect(result).toMatchObject({ maxPoints: 0, rate: 0, points: 2600 });
+      await expect(result).rejects.toThrow(MockCustomError);
     });
 
     test('reports the id of an already-open giftcard payment on the cart', async () => {
@@ -256,15 +262,7 @@ describe('mock-giftcard.service', () => {
       jest
         .spyOn(DefaultCartService.prototype, 'getPaymentAmount')
         .mockResolvedValue({ currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 });
-      mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
-          HttpResponse.json({
-            userId: 'demo@example.com',
-            points: 2600,
-            amount: { centAmount: 2600, currencyCode: 'EUR' },
-          }),
-        ),
-      );
+      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(balanceBody())));
 
       const result = await mockGiftCardService.balance('code-from-the-widget');
 
@@ -293,15 +291,7 @@ describe('mock-giftcard.service', () => {
       jest
         .spyOn(DefaultCartService.prototype, 'getPaymentAmount')
         .mockResolvedValue({ currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 });
-      mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
-          HttpResponse.json({
-            userId: 'demo@example.com',
-            points: 2600,
-            amount: { centAmount: 2600, currencyCode: 'EUR' },
-          }),
-        ),
-      );
+      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(balanceBody())));
 
       const result = await mockGiftCardService.balance('code-from-the-widget');
 
@@ -323,15 +313,7 @@ describe('mock-giftcard.service', () => {
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
-      mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
-          HttpResponse.json({
-            userId: 'demo@example.com',
-            points: 2600,
-            amount: { centAmount: 2600, currencyCode: 'EUR' },
-          }),
-        ),
-      );
+      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(balanceBody())));
 
       const result = await mockGiftCardService.balance(code);
 

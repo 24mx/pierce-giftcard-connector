@@ -19,10 +19,10 @@ export const BalanceResponseSchema = Type.Object({
   // otherwise. Lets a caller reconstruct "a redemption is active" state after losing it client-side
   // (e.g. a page refresh mid-checkout), without guessing at commercetools payment internals itself.
   openRedemptionId: Type.Union([Type.String(), Type.Null()]),
-  // The redeemable cap for THIS cart (balance capped by cart total and the card floor) and the
-  // precise cents-per-point rate in `amount.currencyCode` - not the full spendable balance `points`
-  // reports above. Both `0` when the loyalty backend's advisory quote call fails; a caller must
-  // treat that as "nothing redeemable right now", not an error - see MockGiftCardService.balance.
+  // The redeemable cap for THIS cart (balance capped by what the cart still asks for and the card
+  // floor) and the precise cents-per-point rate in `amount.currencyCode` - not the full spendable
+  // balance `points` reports above. Both come from the same call as the balance, so `maxPoints: 0`
+  // says exactly one thing: nothing is redeemable against this cart right now.
   maxPoints: Type.Number(),
   rate: Type.Number(),
 });
