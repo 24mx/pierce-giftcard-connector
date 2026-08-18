@@ -170,6 +170,61 @@ describe('loyalty.client', () => {
     });
   });
 
+  describe('quote', () => {
+    test('requests the redeemable cap for the given user, cart and currency', async () => {
+      let receivedUrl: URL | undefined;
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, ({ request }) => {
+          receivedUrl = new URL(request.url);
+          return HttpResponse.json({
+            maxPoints: 4500,
+            maxCents: 4500,
+            spendable: 2600,
+            rateToEur: 1,
+            currency: 'EUR',
+          });
+        }),
+      );
+
+      const result = await client.quote({
+        userId: 'demo@example.com',
+        cartId: 'cart-1',
+        cartTotal: 5175,
+        currencyCode: 'SEK',
+      });
+
+      expect(receivedUrl?.searchParams.get('userId')).toStrictEqual('demo@example.com');
+      expect(receivedUrl?.searchParams.get('cartId')).toStrictEqual('cart-1');
+      expect(receivedUrl?.searchParams.get('cartTotal')).toStrictEqual('5175');
+      expect(receivedUrl?.searchParams.get('currency')).toStrictEqual('SEK');
+      expect(result).toStrictEqual({
+        maxPoints: 4500,
+        maxCents: 4500,
+        spendable: 2600,
+        rateToEur: 1,
+        currency: 'EUR',
+      });
+    });
+
+    test('throws a LoyaltyApiError on an unmapped currency', async () => {
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, () =>
+          HttpResponse.json({ error: 'unsupported currency: JPY' }, { status: 400 }),
+        ),
+      );
+
+      const result = client.quote({
+        userId: 'demo@example.com',
+        cartId: 'cart-1',
+        cartTotal: 5175,
+        currencyCode: 'JPY',
+      });
+
+      await expect(result).rejects.toThrow(LoyaltyApiError);
+      await expect(result).rejects.toMatchObject({ status: 400 });
+    });
+  });
+
   describe('voidHold', () => {
     test('posts the payment id so the hold stops withholding points now', async () => {
       let receivedBody: unknown;

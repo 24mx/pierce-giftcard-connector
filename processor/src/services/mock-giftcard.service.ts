@@ -17,7 +17,7 @@ import {
   ReversePaymentRequest,
 } from './types/operation.type';
 import { AmountSchemaDTO, PaymentModificationStatus } from '../dtos/operations/payment-intents.dto';
-import { RedeemRequestDTO } from '../dtos/mock-giftcards.dto';
+import { BalanceResponseSchemaDTO, RedeemRequestDTO, RedeemResponseDTO } from '../dtos/mock-giftcards.dto';
 import { getConfig } from '../config/config';
 import { appLogger, paymentSDK } from '../payment-sdk';
 import { AbstractGiftCardService } from './abstract-giftcard.service';
@@ -25,7 +25,6 @@ import { LoyaltyAPI } from '../clients/loyalty.client';
 import { LoyaltyHoldResponse } from '../clients/types/loyalty.client.type';
 import { LoyaltyApiError } from '../errors/loyalty-api.error';
 import { getCartIdFromContext, getPaymentInterfaceFromContext } from '../libs/fastify/context/context';
-import { BalanceResponseSchemaDTO, RedeemResponseDTO } from '../dtos/mock-giftcards.dto';
 import { MockCustomError } from '../errors/mock-api.error';
 import { BalanceConverter } from './converters/balance-converter';
 import { RedemptionConverter } from './converters/redemption-converter';
@@ -141,11 +140,37 @@ export class MockGiftCardService extends AbstractGiftCardService {
         userId,
         currencyCode: amountPlanned.currencyCode,
       });
+      const quote = await this.getRedeemableQuote(userId, ctCart);
 
-      const balance = this.balanceConverter.convert(balanceResult, openRedemptionId);
+      const balance = this.balanceConverter.convert(balanceResult, openRedemptionId, quote);
       return this.capToRequestedAmount(balance, code, amountPlanned.currencyCode);
     } catch (e) {
       throw this.toConnectorError(e);
+    }
+  }
+
+  /**
+   * The redeemable cap for this cart - capped by the shopper's balance, the cart total and the
+   * card floor, in the cart's own currency - plus the precise cents-per-point rate. cartTotal
+   * comes off the cart itself (the same way redeem()'s hold does), not from the caller.
+   *
+   * Advisory only, same as the backend's own quote() doc comment says: hold() remains the gate
+   * checked against the loyalty backend directly at redeem time. A failure here must not fail the
+   * whole balance() call over what is, for it, a secondary concern - the redemption slider simply
+   * shows nothing redeemable (`maxPoints: 0`) until the next successful read.
+   */
+  private async getRedeemableQuote(userId: string, ctCart: Cart): Promise<{ maxPoints: number; rate: number }> {
+    try {
+      const quoteResult = await LoyaltyAPI().quote({
+        userId,
+        cartId: ctCart.id,
+        cartTotal: ctCart.totalPrice.centAmount,
+        currencyCode: ctCart.totalPrice.currencyCode,
+      });
+
+      return { maxPoints: quoteResult.maxPoints, rate: quoteResult.rateToEur };
+    } catch {
+      return { maxPoints: 0, rate: 0 };
     }
   }
 

@@ -6,6 +6,8 @@ import {
   LoyaltyErrorResponse,
   LoyaltyHoldRequest,
   LoyaltyHoldResponse,
+  LoyaltyQuoteRequest,
+  LoyaltyQuoteResponse,
   LoyaltyVoidRequest,
 } from './types/loyalty.client.type';
 
@@ -58,6 +60,23 @@ export class LoyaltyClient {
       method: 'POST',
       body: JSON.stringify(request),
     });
+  }
+
+  /**
+   * The redeemable cap for a cart: the smaller of the user's spendable balance and what the cart
+   * total can absorb (minus the card floor), plus the FX rate to convert intermediate slider
+   * positions without a request per tick. Advisory only - hold() remains the gate that gets
+   * checked against commercetools.
+   */
+  public async quote(request: LoyaltyQuoteRequest): Promise<LoyaltyQuoteResponse> {
+    const query = new URLSearchParams({
+      userId: request.userId,
+      cartId: request.cartId,
+      cartTotal: String(request.cartTotal),
+      currency: request.currencyCode,
+    });
+
+    return this.send<LoyaltyQuoteResponse>(`/loyalty/giftcard/quote?${query.toString()}`, { method: 'GET' });
   }
 
   /**

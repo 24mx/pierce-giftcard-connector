@@ -38,6 +38,23 @@ export type LoyaltyVoidRequest = {
   paymentId: string;
 };
 
+export type LoyaltyQuoteRequest = {
+  userId: string;
+  cartId: string;
+  /** The cart's total, in minor units of `currencyCode` — the ceiling quote() measures against. */
+  cartTotal: number;
+  currencyCode: string;
+};
+
+/** A quote as the storefront reads it: see GiftcardQuoteResponse in the loyalty backend. */
+export type LoyaltyQuoteResponse = {
+  maxPoints: number;
+  maxCents: number;
+  spendable: number;
+  rateToEur: number;
+  currency: string;
+};
+
 /** Error body returned by the loyalty backend for every non-2xx response. */
 export type LoyaltyErrorResponse = {
   error?: string;

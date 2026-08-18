@@ -129,9 +129,23 @@ describe('mock-giftcard.service', () => {
   });
 
   describe('balance', () => {
-    const setupLoyaltyConfig = () =>
+    // Every balance() call now also asks for a quote - registered by default here so tests that
+    // don't care about it don't have to; tests that do override with mockServer.use() afterwards.
+    const setupLoyaltyConfig = () => {
       // no currency key on purpose: balance() takes the currency from the cart
       setupMockConfig({ loyaltyApiUrl: LOYALTY_URL, loyaltyTimeoutMs: 5000 });
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, () =>
+          HttpResponse.json({
+            maxPoints: 2600,
+            maxCents: 2600,
+            spendable: 2600,
+            rateToEur: 1,
+            currency: 'EUR',
+          }),
+        ),
+      );
+    };
 
     test('asks the loyalty backend for the spendable points of the cart customer, in the cart currency', async () => {
       setupLoyaltyConfig();
@@ -161,7 +175,71 @@ describe('mock-giftcard.service', () => {
         amount: { centAmount: 2600, currencyCode: 'EUR' },
         points: 2600,
         openRedemptionId: null,
+        maxPoints: 2600,
+        rate: 1,
       });
+    });
+
+    test('asks the loyalty backend for the redeemable cap of the cart, in the cart currency', async () => {
+      setupLoyaltyConfig();
+      const cart = getCartWithCustomerEmail('demo@example.com');
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+          HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 2600,
+            amount: { centAmount: 2600, currencyCode: 'EUR' },
+          }),
+        ),
+      );
+
+      let receivedUrl: URL | undefined;
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, ({ request }) => {
+          receivedUrl = new URL(request.url);
+          return HttpResponse.json({
+            maxPoints: 100,
+            maxCents: 497,
+            spendable: 2600,
+            rateToEur: 4.970006,
+            currency: 'EUR',
+          });
+        }),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(receivedUrl?.searchParams.get('userId')).toStrictEqual('demo@example.com');
+      expect(receivedUrl?.searchParams.get('cartId')).toStrictEqual(cart.id);
+      expect(receivedUrl?.searchParams.get('cartTotal')).toStrictEqual(String(cart.totalPrice.centAmount));
+      expect(receivedUrl?.searchParams.get('currency')).toStrictEqual(cart.totalPrice.currencyCode);
+      // spendable is not surfaced on the balance response - `points` already reports it.
+      expect(result).toMatchObject({ maxPoints: 100, rate: 4.970006 });
+    });
+
+    // Advisory only: hold() remains the gate checked against the loyalty backend directly at
+    // redeem time, so a broken quote call must not fail the whole balance() read - the redemption
+    // slider just shows nothing redeemable until the next successful read.
+    test('defaults maxPoints/rate to 0 when the quote call fails, without failing balance() itself', async () => {
+      setupLoyaltyConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+          HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 2600,
+            amount: { centAmount: 2600, currencyCode: 'EUR' },
+          }),
+        ),
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/quote`, () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(result).toMatchObject({ maxPoints: 0, rate: 0, points: 2600 });
     });
 
     test('reports the id of an already-open giftcard payment on the cart', async () => {
@@ -262,6 +340,8 @@ describe('mock-giftcard.service', () => {
         amount: { centAmount: expectedCents, currencyCode: 'EUR' },
         points: 2600,
         openRedemptionId: null,
+        maxPoints: 2600,
+        rate: 1,
       });
     });
 
