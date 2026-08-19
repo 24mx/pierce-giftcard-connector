@@ -249,16 +249,20 @@ export class MockGiftCardService extends AbstractGiftCardService {
       paymentId: ctPayment.id,
     });
 
+    // The amount actually still owed on this cart - the same figure balance() measures its own cap
+    // against (see the comment there) - not the raw cart total. If another payment already covers
+    // part of the cart, the backend's own EUR 1 floor must be enforced against what is genuinely
+    // left, or a shopper could redeem points down to 1 EUR of the *gross* total while another
+    // payment already covers most of it, leaving far less than EUR 1 actually payable by that method.
+    const stillOwed = await this.ctCartService.getPaymentAmount({ cart: ctCart });
     const holdRequest = {
       userId,
       paymentId: ctPayment.id,
       cartId: ctCart.id,
       amount: redeemAmount,
-      // Off the cart we just read, so the backend can enforce the EUR 1 card floor itself rather
-      // than trusting the amount the checkout SDK handed us.
       cartTotal: {
-        centAmount: ctCart.totalPrice.centAmount,
-        currencyCode: ctCart.totalPrice.currencyCode,
+        centAmount: stillOwed.centAmount,
+        currencyCode: stillOwed.currencyCode,
       },
     };
 

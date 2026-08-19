@@ -423,6 +423,12 @@ describe('mock-giftcard.service', () => {
       },
     };
 
+    // getPaymentAmount() nets the cart total against every other payment already on the cart - real
+    // work these tests are not about, so they pin it back to "nothing else has been paid yet"
+    // (the cart's own total), matching what they asserted before that call existed.
+    const mockStillOwedFullTotal = (totalPrice: { centAmount: number; currencyCode: string; fractionDigits: number }) =>
+      jest.spyOn(DefaultCartService.prototype, 'getPaymentAmount').mockResolvedValue(totalPrice);
+
     test('holds the points before writing the transaction that covers the cart', async () => {
       setupLoyaltyConfig();
       const cart = getCartWithCustomerEmail('Demo@Example.COM');
@@ -465,6 +471,58 @@ describe('mock-giftcard.service', () => {
       });
     });
 
+    test('measures the hold floor against the amount actually still owed, not the raw cart total', async () => {
+      setupLoyaltyConfig();
+      const cardPayment = {
+        ...getPaymentResultOk,
+        id: 'card-payment-already-charged',
+        amountPlanned: { type: 'centPrecision' as const, currencyCode: 'EUR', centAmount: 4000, fractionDigits: 2 },
+        transactions: [
+          {
+            id: 'CARD_CHARGE',
+            type: 'Charge' as const,
+            amount: { type: 'centPrecision' as const, currencyCode: 'EUR', centAmount: 4000, fractionDigits: 2 },
+            interactionId: 'CARD_INTERACTION',
+            state: 'Success' as const,
+          },
+        ],
+      };
+      // getCartWithCustomerEmail's totalPrice is 4999 EUR cents; 4000 of that is already
+      // Charge/Success via cardPayment, so only 999 cents are actually still owed.
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: cardPayment.id, obj: cardPayment }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
+      jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
+      jest
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .spyOn((paymentSDK.ctCartService as any).ctAPI.payment, 'getPaymentById')
+        .mockResolvedValue(cardPayment);
+
+      let holdBody: unknown;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
+          holdBody = await request.json();
+          return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 999, balance: 0 });
+        }),
+      );
+
+      await mockGiftCardService.redeem({
+        data: { code: 'code-from-the-widget', redeemAmount: { centAmount: 999, currencyCode: 'EUR' } },
+      });
+
+      // Not cart.totalPrice (4999) - the card payment already covers 4000, so only 999 is actually
+      // left, and that is the figure the backend's "leave EUR 1 for another payment method" floor
+      // must be measured against.
+      expect((holdBody as { cartTotal: { centAmount: number; currencyCode: string } }).cartTotal).toStrictEqual({
+        centAmount: 999,
+        currencyCode: 'EUR',
+      });
+    });
+
     test('voids an existing open giftcard payment on the cart before creating a new redemption', async () => {
       setupLoyaltyConfig();
       const stalePayment = openGiftCardPaymentFixture({ id: 'stale-giftcard-payment' });
@@ -476,6 +534,7 @@ describe('mock-giftcard.service', () => {
       const getCart = jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       const updatePayment = jest
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockImplementation(async (opts) => {
@@ -526,6 +585,7 @@ describe('mock-giftcard.service', () => {
       const getCart = jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       const updatePayment = jest
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockImplementation(async (opts) => {
@@ -622,6 +682,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       const updatePayment = jest
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
@@ -650,6 +711,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       const updatePayment = jest
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
@@ -678,6 +740,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
         http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => HttpResponse.error()),
@@ -752,6 +815,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(conflictingPayment);
       jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockImplementation(async (opts) => {
         callOrder.push(`updatePayment:${opts.id}:${opts.transaction.type}`);
@@ -857,6 +921,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockRejectedValue(new Error('CT is unavailable'));
       const updatePayment = jest.spyOn(DefaultPaymentService.prototype, 'updatePayment');
       const logErrorSpy = jest.spyOn(log, 'error');
@@ -896,6 +961,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(conflictingPayment);
       jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
 
@@ -934,6 +1000,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(conflictingPayment);
       const updatePayment = jest
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
@@ -993,6 +1060,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
       jest.spyOn(DefaultPaymentService.prototype, 'createPayment').mockResolvedValue(createPaymentResultOk);
       jest.spyOn(DefaultCartService.prototype, 'addPayment').mockResolvedValue(cart);
+      mockStillOwedFullTotal(cart.totalPrice);
       jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(alreadyVoidedPayment);
       const updatePayment = jest
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
