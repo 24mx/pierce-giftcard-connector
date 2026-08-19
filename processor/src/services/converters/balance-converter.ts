@@ -27,6 +27,10 @@ export class BalanceConverter {
       openRedemptionId,
       maxPoints: cap.maxPoints,
       rate: opts.rateToEur,
+      // Falls back to null (not 0) against a backend that hasn't shipped openHoldPoints yet -
+      // 0 would claim "nothing is held" when the truth is "unknown", same distinction maxPoints/rate
+      // already draw against a backend without a cap.
+      openRedemptionPoints: opts.openHoldPoints ?? null,
     };
   }
 }

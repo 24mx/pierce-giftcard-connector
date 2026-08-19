@@ -29,6 +29,13 @@ export type LoyaltyBalanceResponse = {
   rateToEur: number;
   /** Present only when the request named a cart. See GiftcardCap in the loyalty backend. */
   cap?: LoyaltyCap;
+  /**
+   * Points already committed to this cart's own open reservation, if it has one - a real `0` when
+   * the request named a cart with none, absent (not `0`) when no cart was named at all. Present for
+   * the same reason `cartId` is on the request: GIFTCARD_ZERO_CT_COVERAGE makes the connector write
+   * the gift card Payment into commercetools at zero, so this is the only place the amount survives.
+   */
+  openHoldPoints?: number;
 };
 
 export type LoyaltyHoldRequest = {

@@ -25,6 +25,11 @@ export const BalanceResponseSchema = Type.Object({
   // says exactly one thing: nothing is redeemable against this cart right now.
   maxPoints: Type.Number(),
   rate: Type.Number(),
+  // How many points openRedemptionId's own reservation covers, or null when openRedemptionId is
+  // null. Lets a caller restore a slider's position after losing it client-side (e.g. a page
+  // refresh), which openRedemptionId alone cannot do - it names which redemption is open, not how
+  // much of it there is.
+  openRedemptionPoints: Type.Union([Type.Number(), Type.Null()]),
 });
 
 export const RedeemRequestSchema = Type.Object({

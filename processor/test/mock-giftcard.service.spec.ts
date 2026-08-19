@@ -142,6 +142,7 @@ describe('mock-giftcard.service', () => {
       amount: { centAmount: 2600, currencyCode: 'EUR' },
       rateToEur: 1,
       cap: { maxPoints: 2600, maxCents: 2600 },
+      openHoldPoints: 0,
       ...overrides,
     });
 
@@ -171,6 +172,7 @@ describe('mock-giftcard.service', () => {
         openRedemptionId: null,
         maxPoints: 2600,
         rate: 1,
+        openRedemptionPoints: 0,
       });
     });
 
@@ -194,6 +196,44 @@ describe('mock-giftcard.service', () => {
       expect(receivedUrl?.searchParams.get('currency')).toStrictEqual('EUR');
       // spendable is not surfaced separately - `points` already reports it.
       expect(result).toMatchObject({ maxPoints: 100, rate: 4.970006 });
+    });
+
+    // The backend already knows how much of this cart's own reservation is committed - see
+    // GiftcardHoldService.quote in the loyalty backend - this just reports that number alongside
+    // the cap, the same way openRedemptionId already reports which reservation is open.
+    test('reports how many points an already-open reservation on this cart covers', async () => {
+      setupLoyaltyConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+          HttpResponse.json(balanceBody({ openHoldPoints: 200 })),
+        ),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(result.openRedemptionPoints).toStrictEqual(200);
+    });
+
+    // Degrades to null (not 0, and not a throw) against a loyalty backend that hasn't shipped
+    // openHoldPoints yet - same fail-closed treatment maxPoints/rate got before the backend
+    // reported those.
+    test('reports openRedemptionPoints null when the backend answers without openHoldPoints', async () => {
+      setupLoyaltyConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      const bodyWithoutOpenHoldPoints = balanceBody();
+      delete (bodyWithoutOpenHoldPoints as Record<string, unknown>).openHoldPoints;
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(bodyWithoutOpenHoldPoints)),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(result.openRedemptionPoints).toBeNull();
     });
 
     // getPaymentAmount prefers taxedPrice.totalGross and subtracts what is already paid; totalPrice
@@ -324,6 +364,7 @@ describe('mock-giftcard.service', () => {
         openRedemptionId: null,
         maxPoints: 2600,
         rate: 1,
+        openRedemptionPoints: 0,
       });
     });
 
