@@ -154,7 +154,7 @@ describe('mock-giftcard.service', () => {
 
       let receivedUrl: URL | undefined;
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
           receivedUrl = new URL(request.url);
           return HttpResponse.json(balanceBody());
         }),
@@ -183,7 +183,7 @@ describe('mock-giftcard.service', () => {
 
       let receivedUrl: URL | undefined;
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
           receivedUrl = new URL(request.url);
           return HttpResponse.json(balanceBody({ rateToEur: 4.970006, cap: { maxPoints: 100, maxCents: 497 } }));
         }),
@@ -207,7 +207,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () =>
           HttpResponse.json(balanceBody({ openHoldPoints: 200 })),
         ),
       );
@@ -228,7 +228,7 @@ describe('mock-giftcard.service', () => {
       const bodyWithoutOpenHoldPoints = balanceBody();
       delete (bodyWithoutOpenHoldPoints as Record<string, unknown>).openHoldPoints;
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(bodyWithoutOpenHoldPoints)),
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () => HttpResponse.json(bodyWithoutOpenHoldPoints)),
       );
 
       const result = await mockGiftCardService.balance('code-from-the-widget');
@@ -252,7 +252,7 @@ describe('mock-giftcard.service', () => {
 
       let receivedUrl: URL | undefined;
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
           receivedUrl = new URL(request.url);
           return HttpResponse.json(balanceBody());
         }),
@@ -273,7 +273,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () =>
           HttpResponse.json({
             userId: 'demo@example.com',
             points: 2600,
@@ -302,7 +302,7 @@ describe('mock-giftcard.service', () => {
       jest
         .spyOn(DefaultCartService.prototype, 'getPaymentAmount')
         .mockResolvedValue({ currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 });
-      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(balanceBody())));
+      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () => HttpResponse.json(balanceBody())));
 
       const result = await mockGiftCardService.balance('code-from-the-widget');
 
@@ -331,7 +331,7 @@ describe('mock-giftcard.service', () => {
       jest
         .spyOn(DefaultCartService.prototype, 'getPaymentAmount')
         .mockResolvedValue({ currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 });
-      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(balanceBody())));
+      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () => HttpResponse.json(balanceBody())));
 
       const result = await mockGiftCardService.balance('code-from-the-widget');
 
@@ -353,7 +353,7 @@ describe('mock-giftcard.service', () => {
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
-      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.json(balanceBody())));
+      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () => HttpResponse.json(balanceBody())));
 
       const result = await mockGiftCardService.balance(code);
 
@@ -374,7 +374,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () =>
           HttpResponse.json({ error: 'unsupported currency: USD' }, { status: 400 }),
         ),
       );
@@ -401,7 +401,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () =>
           HttpResponse.json({ error: 'boom' }, { status: 500 }),
         ),
       );
@@ -444,7 +444,7 @@ describe('mock-giftcard.service', () => {
 
       let holdBody: unknown;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
           callOrder.push('hold');
           holdBody = await request.json();
           return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
@@ -504,7 +504,7 @@ describe('mock-giftcard.service', () => {
 
       let holdBody: unknown;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
           holdBody = await request.json();
           return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 999, balance: 0 });
         }),
@@ -543,11 +543,11 @@ describe('mock-giftcard.service', () => {
         });
 
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async () => {
           callOrder.push('void');
           return HttpResponse.json({ paymentId: stalePayment.id, points: 2000, balance: 2000 });
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async () => {
           callOrder.push('hold');
           return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
         }),
@@ -594,12 +594,12 @@ describe('mock-giftcard.service', () => {
         });
 
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
           const body = (await request.json()) as { paymentId: string };
           callOrder.push(`void:${body.paymentId}`);
           return HttpResponse.json({ paymentId: body.paymentId, points: 2000, balance: 2000 });
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async () => {
           callOrder.push('hold');
           return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
         }),
@@ -637,7 +637,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () =>
           HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 }),
         ),
       );
@@ -687,7 +687,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () =>
           HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 }),
         ),
       );
@@ -716,7 +716,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () =>
           HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 }),
         ),
       );
@@ -743,8 +743,8 @@ describe('mock-giftcard.service', () => {
       mockStillOwedFullTotal(cart.totalPrice);
       jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => HttpResponse.error()),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () => HttpResponse.error()),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () =>
           HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 }),
         ),
       );
@@ -780,7 +780,7 @@ describe('mock-giftcard.service', () => {
 
       let holdBody: unknown;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
           holdBody = await request.json();
           return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
         }),
@@ -825,7 +825,7 @@ describe('mock-giftcard.service', () => {
       let holdCalls = 0;
       const holdBodies: unknown[] = [];
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
           holdCalls += 1;
           callOrder.push(`hold${holdCalls}`);
           holdBodies.push(await request.json());
@@ -837,7 +837,7 @@ describe('mock-giftcard.service', () => {
           }
           return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async () => {
           callOrder.push('void');
           return HttpResponse.json({ paymentId: conflictingPayment.id, points: 2000, balance: 2000 });
         }),
@@ -881,14 +881,14 @@ describe('mock-giftcard.service', () => {
       let holdCalls = 0;
       let voidCalls = 0;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
           holdCalls += 1;
           return HttpResponse.json(
             { error: 'cart already has an open reservation', existingPaymentId: concurrentlyCreatedPayment.id },
             { status: 409 },
           );
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () => {
           voidCalls += 1;
           return HttpResponse.json({ paymentId: concurrentlyCreatedPayment.id, points: 2000, balance: 2000 });
         }),
@@ -928,7 +928,7 @@ describe('mock-giftcard.service', () => {
 
       let holdCalls = 0;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
           holdCalls += 1;
           return HttpResponse.json(
             { error: 'cart already has an open reservation', existingPaymentId: conflictingPayment.id },
@@ -967,7 +967,7 @@ describe('mock-giftcard.service', () => {
 
       let holdCalls = 0;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
           holdCalls += 1;
           // Both attempts name the same conflicting payment - a still-conflicting cart on retry,
           // not a balance problem.
@@ -976,7 +976,7 @@ describe('mock-giftcard.service', () => {
             { status: 409 },
           );
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
           HttpResponse.json({ paymentId: conflictingPayment.id, points: 2000, balance: 2000 }),
         ),
       );
@@ -1008,14 +1008,14 @@ describe('mock-giftcard.service', () => {
 
       let holdCalls = 0;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
           holdCalls += 1;
           return HttpResponse.json(
             { error: 'cart already has an open reservation', existingPaymentId: conflictingPayment.id },
             { status: 409 },
           );
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
           HttpResponse.json({ paymentId: conflictingPayment.id, points: 2000, balance: 2000 }),
         ),
       );
@@ -1069,7 +1069,7 @@ describe('mock-giftcard.service', () => {
       let holdCalls = 0;
       let voidCalls = 0;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
           holdCalls += 1;
           if (holdCalls === 1) {
             return HttpResponse.json(
@@ -1079,7 +1079,7 @@ describe('mock-giftcard.service', () => {
           }
           return HttpResponse.json({ paymentId: createPaymentResultOk.id, points: 2400, balance: 200 });
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () => {
           voidCalls += 1;
           return HttpResponse.json({ paymentId: alreadyVoidedPayment.id, points: 2000, balance: 2000 });
         }),
@@ -1109,7 +1109,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () =>
           HttpResponse.json({ error: 'not enough spendable points' }, { status: 409 }),
         ),
       );
@@ -1131,7 +1131,7 @@ describe('mock-giftcard.service', () => {
       const updatePayment = jest
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
-      mockServer.use(http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () => HttpResponse.error()));
+      mockServer.use(http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => HttpResponse.error()));
 
       const result = mockGiftCardService.redeem(redeemOpts);
 
@@ -1196,7 +1196,7 @@ describe('mock-giftcard.service', () => {
 
         let voidBody: unknown;
         mockServer.use(
-          http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async ({ request }) => {
+          http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
             callOrder.push('void');
             voidBody = await request.json();
             return HttpResponse.json({ paymentId: getPaymentResultOk.id, points: 2400, balance: 2600 });
@@ -1226,7 +1226,7 @@ describe('mock-giftcard.service', () => {
         .spyOn(DefaultPaymentService.prototype, 'updatePayment')
         .mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
           HttpResponse.json({ paymentId: getPaymentResultOk.id, points: 2400, balance: 2600 }),
         ),
       );
@@ -1248,7 +1248,7 @@ describe('mock-giftcard.service', () => {
       jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(getPaymentResultOk);
       jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
           HttpResponse.json({ error: 'unknown payment' }, { status: 404 }),
         ),
       );
@@ -1262,7 +1262,7 @@ describe('mock-giftcard.service', () => {
       setupLoyaltyConfig();
       jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(getPaymentResultOk);
       jest.spyOn(DefaultPaymentService.prototype, 'updatePayment').mockResolvedValue(updatePaymentResultOk);
-      mockServer.use(http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () => HttpResponse.error()));
+      mockServer.use(http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () => HttpResponse.error()));
 
       const result = await mockGiftCardService.modifyPayment(modifyPaymentOptsFor('cancelPayment'));
 

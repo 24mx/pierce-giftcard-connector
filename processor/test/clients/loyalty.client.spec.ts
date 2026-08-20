@@ -27,7 +27,7 @@ describe('loyalty.client', () => {
     test('requests the spendable balance for the given user and currency', async () => {
       let receivedUrl: URL | undefined;
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
           receivedUrl = new URL(request.url);
           return HttpResponse.json({
             userId: 'demo@example.com',
@@ -57,7 +57,7 @@ describe('loyalty.client', () => {
     test('names the cart when one is given, so the answer carries its cap', async () => {
       let receivedUrl: URL | undefined;
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
           receivedUrl = new URL(request.url);
           return HttpResponse.json({
             userId: 'demo@example.com',
@@ -84,7 +84,7 @@ describe('loyalty.client', () => {
 
     test('throws a LoyaltyApiError carrying status and backend message on 400', async () => {
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () =>
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () =>
           HttpResponse.json({ error: 'unsupported currency: USD' }, { status: 400 }),
         ),
       );
@@ -99,7 +99,7 @@ describe('loyalty.client', () => {
     });
 
     test('throws a LoyaltyApiError with status 0 when the backend is unreachable', async () => {
-      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, () => HttpResponse.error()));
+      mockServer.use(http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () => HttpResponse.error()));
 
       const result = client.balance({ userId: 'demo@example.com', currencyCode: 'EUR' });
 
@@ -113,7 +113,7 @@ describe('loyalty.client', () => {
       const authenticated = new LoyaltyClient({ baseUrl: LOYALTY_URL, timeoutMs: 5000, apiKey: 's3cret' });
       const seen: (string | null)[] = [];
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
           seen.push(request.headers.get('x-api-key'));
           return HttpResponse.json({
             userId: 'demo@example.com',
@@ -121,7 +121,7 @@ describe('loyalty.client', () => {
             amount: { centAmount: 1, currencyCode: 'EUR' },
           });
         }),
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, ({ request }) => {
           seen.push(request.headers.get('x-api-key'));
           return HttpResponse.json({ paymentId: 'payment-1', points: 1, balance: 1 });
         }),
@@ -136,7 +136,7 @@ describe('loyalty.client', () => {
     test('omits the header when no secret is configured, so an unsecured backend still works', async () => {
       let seen: string | null = 'not-called';
       mockServer.use(
-        http.get(`${LOYALTY_URL}/loyalty/giftcard/balance`, ({ request }) => {
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
           seen = request.headers.get('x-api-key');
           return HttpResponse.json({
             userId: 'demo@example.com',
@@ -156,7 +156,7 @@ describe('loyalty.client', () => {
     test('posts the hold keyed by payment and cart', async () => {
       let receivedBody: unknown;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, async ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
           receivedBody = await request.json();
           return HttpResponse.json({ paymentId: 'payment-1', points: 2400, balance: 200 });
         }),
@@ -184,7 +184,7 @@ describe('loyalty.client', () => {
 
     test('throws a LoyaltyApiError with status 409 when the points are not sufficient', async () => {
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/hold`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () =>
           HttpResponse.json({ error: 'not enough spendable points' }, { status: 409 }),
         ),
       );
@@ -208,7 +208,7 @@ describe('loyalty.client', () => {
     test('posts the payment id so the hold stops withholding points now', async () => {
       let receivedBody: unknown;
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, async ({ request }) => {
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
           receivedBody = await request.json();
           return HttpResponse.json({ paymentId: 'payment-1', points: 2400, balance: 2600 });
         }),
@@ -222,7 +222,7 @@ describe('loyalty.client', () => {
 
     test('throws a LoyaltyApiError with status 404 for an unknown payment', async () => {
       mockServer.use(
-        http.post(`${LOYALTY_URL}/loyalty/giftcard/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
           HttpResponse.json({ error: 'unknown payment' }, { status: 404 }),
         ),
       );

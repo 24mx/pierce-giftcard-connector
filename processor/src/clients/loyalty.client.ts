@@ -48,7 +48,7 @@ export class LoyaltyClient {
       query.set('cartTotal', String(request.cartTotal));
     }
 
-    return this.send<LoyaltyBalanceResponse>(`/loyalty/giftcard/balance?${query.toString()}`, { method: 'GET' });
+    return this.send<LoyaltyBalanceResponse>(`/loyalty/redemption/balance?${query.toString()}`, { method: 'GET' });
   }
 
   /**
@@ -58,7 +58,7 @@ export class LoyaltyClient {
    * extra.
    */
   public async hold(request: LoyaltyHoldRequest): Promise<LoyaltyHoldResponse> {
-    return this.send<LoyaltyHoldResponse>('/loyalty/giftcard/hold', {
+    return this.send<LoyaltyHoldResponse>('/loyalty/redemption/hold', {
       method: 'POST',
       body: JSON.stringify(request),
     });
@@ -70,7 +70,7 @@ export class LoyaltyClient {
    * TTL, so a failure here is worth an error rather than a shrug.
    */
   public async voidHold(request: LoyaltyVoidRequest): Promise<LoyaltyHoldResponse> {
-    return this.send<LoyaltyHoldResponse>('/loyalty/giftcard/void', {
+    return this.send<LoyaltyHoldResponse>('/loyalty/redemption/void', {
       method: 'POST',
       body: JSON.stringify(request),
     });

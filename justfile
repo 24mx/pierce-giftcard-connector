@@ -128,7 +128,7 @@ tunnel-check url:
     key="$(just env-value LOYALTY_API_KEY)"
     curl -s -w '\n--- http=%{http_code} ip=%{remote_ip} tls_verify=%{ssl_verify_result}\n' \
       --max-time 30 --resolve "${host}:443:${ip}" -H "X-Api-Key: ${key}" \
-      "{{url}}/loyalty/giftcard/balance?userId=demo%40example.com&currency=EUR"
+      "{{url}}/loyalty/redemption/balance?userId=demo%40example.com&currency=EUR"
 
 # Unit tests.
 test:
@@ -240,7 +240,7 @@ points-balance user="demo@example.com" base=loyalty_url:
     # The key lives in processor/.env, not in your shell — an exported one still wins if you set it.
     key="$(just env-value LOYALTY_API_KEY)"
     auth=(); [ -n "$key" ] && auth=(-H "X-Api-Key: $key")
-    curl -s "${auth[@]}" "{{base}}/loyalty/giftcard/balance?userId={{user}}&currency=EUR"
+    curl -s "${auth[@]}" "{{base}}/loyalty/redemption/balance?userId={{user}}&currency=EUR"
     echo
 
 # Credit demo points, so there is something to redeem.
@@ -263,5 +263,5 @@ points-void payment base=loyalty_url:
     key="$(just env-value LOYALTY_API_KEY)"
     auth=(); [ -n "$key" ] && auth=(-H "X-Api-Key: $key")
     curl -s -X POST "${auth[@]}" -H 'Content-Type: application/json' \
-      -d '{"paymentId":"{{payment}}"}' "{{base}}/loyalty/giftcard/void"
+      -d '{"paymentId":"{{payment}}"}' "{{base}}/loyalty/redemption/void"
     echo
