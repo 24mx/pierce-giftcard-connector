@@ -48,7 +48,19 @@ export const BalanceRequestSchema = Type.Object({
   code: Type.String(),
 });
 
+// paymentId is redemptionId from RedeemResponseSchema above - the commercetools payment id the hold
+// is keyed on, which is the only reference the loyalty backend hands out for a redemption.
+export const FinalizeRequestSchema = Type.Object({
+  paymentId: Type.String(),
+});
+
+export const FinalizeResponseSchema = Type.Object({
+  result: Type.String(),
+});
+
 export type RedeemRequestDTO = Static<typeof RedeemRequestSchema>;
 export type RedeemResponseDTO = Static<typeof RedeemResponseSchema>;
 export type BalanceRequestSchemaDTO = Static<typeof BalanceRequestSchema>;
 export type BalanceResponseSchemaDTO = Static<typeof BalanceResponseSchema>;
+export type FinalizeRequestDTO = Static<typeof FinalizeRequestSchema>;
+export type FinalizeResponseDTO = Static<typeof FinalizeResponseSchema>;

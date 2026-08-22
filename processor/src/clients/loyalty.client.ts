@@ -6,6 +6,7 @@ import {
   LoyaltyErrorResponse,
   LoyaltyHoldRequest,
   LoyaltyHoldResponse,
+  LoyaltyLockRequest,
   LoyaltyVoidRequest,
 } from './types/loyalty.client.type';
 
@@ -71,6 +72,18 @@ export class LoyaltyClient {
    */
   public async voidHold(request: LoyaltyVoidRequest): Promise<LoyaltyHoldResponse> {
     return this.send<LoyaltyHoldResponse>('/loyalty/redemption/void', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Locks a reservation right before a checkout's final submission, so a second tab cannot
+   * void-and-recreate it while a card leg elsewhere may already be reading its amount. The lock
+   * expires on its own; there is no matching unlock call.
+   */
+  public async lock(request: LoyaltyLockRequest): Promise<LoyaltyHoldResponse> {
+    return this.send<LoyaltyHoldResponse>('/loyalty/redemption/lock', {
       method: 'POST',
       body: JSON.stringify(request),
     });

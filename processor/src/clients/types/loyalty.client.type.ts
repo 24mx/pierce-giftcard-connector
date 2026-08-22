@@ -62,9 +62,19 @@ export type LoyaltyVoidRequest = {
   paymentId: string;
 };
 
+/**
+ * Locks a reservation against being voided-and-recreated, right before a checkout's final
+ * submission. See LoyaltyClient#lock for why this exists.
+ */
+export type LoyaltyLockRequest = {
+  paymentId: string;
+};
+
 /** Error body returned by the loyalty backend for every non-2xx response. */
 export type LoyaltyErrorResponse = {
   error?: string;
   /** Present only on the /hold 409 for "this cart already has a different open reservation". */
   existingPaymentId?: string;
+  /** Present only on the /lock or /void 409 for "this reservation is locked for final submission". */
+  lockedUntil?: string;
 };

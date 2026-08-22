@@ -8,6 +8,8 @@ import {
   BalanceRequestSchemaDTO,
   BalanceResponseSchema,
   BalanceResponseSchemaDTO,
+  FinalizeRequestDTO,
+  FinalizeResponseSchema,
   RedeemRequestDTO,
   RedeemResponseSchema,
 } from '../dtos/mock-giftcards.dto';
@@ -74,6 +76,37 @@ export const mockGiftCardServiceRoutes = async (
     },
     async (request, reply) => {
       const res = await opts.giftCardService.redeem({
+        data: request.body,
+      });
+
+      return reply.status(200).send(res);
+    },
+  );
+
+  /**
+   * Called by the storefront right before it submits the checkout's final payment, so a second tab
+   * cannot void-and-recreate this reservation while a card leg elsewhere may already be reading its
+   * amount. Best-effort from the widget's point of view — see MockGiftCardService#finalize.
+   */
+  fastify.post<{ Body: FinalizeRequestDTO; Reply: void }>(
+    '/finalize',
+    {
+      preHandler: [opts.sessionHeaderAuthHook.authenticate()],
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            paymentId: Type.String(),
+          },
+          required: ['paymentId'],
+        },
+        response: {
+          200: FinalizeResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const res = await opts.giftCardService.finalize({
         data: request.body,
       });
 

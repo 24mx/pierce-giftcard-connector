@@ -557,8 +557,8 @@ describe('mock-giftcard.service', () => {
 
       expect(getCart).toHaveBeenCalledWith(expect.objectContaining({ expand: ['paymentInfo.payments[*]'] }));
       expect(callOrder).toStrictEqual([
-        `updatePayment:${stalePayment.id}:Refund`,
         'void',
+        `updatePayment:${stalePayment.id}:Refund`,
         'hold',
         `updatePayment:${createPaymentResultOk.id}:Charge`,
       ]);
@@ -566,6 +566,40 @@ describe('mock-giftcard.service', () => {
         id: stalePayment.id,
         transaction: { type: 'Refund', amount: stalePayment.amountPlanned, state: 'Success' },
       });
+    });
+
+    // The two-tab scenario the reordering exists for: this cart's stale payment is being finalized
+    // by another checkout attempt right now, so redeem() must fail this attempt outright rather than
+    // reverting the stale payment's coverage out from under it.
+    test('a stale payment locked for finalization aborts the redemption instead of reverting its coverage', async () => {
+      setupLoyaltyConfig();
+      const stalePayment = openGiftCardPaymentFixture({ id: 'stale-giftcard-payment' });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        paymentInfo: { payments: [{ typeId: 'payment', id: stalePayment.id, obj: stalePayment }] },
+      });
+
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      const updatePayment = jest.spyOn(DefaultPaymentService.prototype, 'updatePayment');
+      const createPayment = jest.spyOn(DefaultPaymentService.prototype, 'createPayment');
+
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
+          HttpResponse.json(
+            {
+              error: 'Reservation is locked for final submission until 2026-01-01T00:00:00',
+              lockedUntil: '2026-01-01T00:00:00',
+            },
+            { status: 409 },
+          ),
+        ),
+      );
+
+      const result = mockGiftCardService.redeem(redeemOpts);
+
+      await expect(result).rejects.toThrow(MockCustomError);
+      await expect(result).rejects.toMatchObject({ code: 'FinalizationInProgress' });
+      expect(updatePayment).not.toHaveBeenCalled();
+      expect(createPayment).not.toHaveBeenCalled();
     });
 
     test('voids every stale open giftcard payment when the cart carries more than one', async () => {
@@ -609,10 +643,10 @@ describe('mock-giftcard.service', () => {
 
       expect(getCart).toHaveBeenCalledWith(expect.objectContaining({ expand: ['paymentInfo.payments[*]'] }));
       expect(callOrder).toStrictEqual([
-        `updatePayment:${stalePayment1.id}:Refund`,
         `void:${stalePayment1.id}`,
-        `updatePayment:${stalePayment2.id}:Refund`,
+        `updatePayment:${stalePayment1.id}:Refund`,
         `void:${stalePayment2.id}`,
+        `updatePayment:${stalePayment2.id}:Refund`,
         'hold',
         `updatePayment:${createPaymentResultOk.id}:Charge`,
       ]);
@@ -847,8 +881,8 @@ describe('mock-giftcard.service', () => {
 
       expect(callOrder).toStrictEqual([
         'hold1',
-        `updatePayment:${conflictingPayment.id}:Refund`,
         'void',
+        `updatePayment:${conflictingPayment.id}:Refund`,
         'hold2',
         `updatePayment:${createPaymentResultOk.id}:Charge`,
       ]);
@@ -1141,6 +1175,62 @@ describe('mock-giftcard.service', () => {
     });
   });
 
+  describe('finalize', () => {
+    const setupLoyaltyConfig = () => setupMockConfig({ loyaltyApiUrl: LOYALTY_URL, loyaltyTimeoutMs: 5000 });
+    const finalizeOpts = { data: { paymentId: 'redeemed-payment-id' } };
+
+    test('locks the reservation and reports success', async () => {
+      setupLoyaltyConfig();
+      let lockBody: unknown;
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/lock`, async ({ request }) => {
+          lockBody = await request.json();
+          return HttpResponse.json({ paymentId: 'redeemed-payment-id', points: 2400, balance: 200 });
+        }),
+      );
+
+      const result = await mockGiftCardService.finalize(finalizeOpts);
+
+      expect(lockBody).toStrictEqual({ paymentId: 'redeemed-payment-id' });
+      expect(result).toStrictEqual({ result: 'Success' });
+    });
+
+    // The one failure that must reach the widget: a genuine competing finalize attempt is in flight,
+    // which is exactly the race this call exists to catch.
+    test('a 409 from the backend fails the checkout instead of being swallowed', async () => {
+      setupLoyaltyConfig();
+      mockServer.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/lock`, () =>
+          HttpResponse.json(
+            { error: 'Reservation redeemed-payment-id is locked for final submission until 2026-01-01T00:00:00' },
+            { status: 409 },
+          ),
+        ),
+      );
+
+      const result = mockGiftCardService.finalize(finalizeOpts);
+
+      await expect(result).rejects.toThrow(MockCustomError);
+      await expect(result).rejects.toMatchObject({ code: 'FinalizationInProgress' });
+    });
+
+    // Best-effort: the reservation this guards was already made at redeem time, so a backend that is
+    // merely unreachable must not block checkout over an extra safety net that could not be applied.
+    test('any other failure is logged and swallowed, still reporting success', async () => {
+      setupLoyaltyConfig();
+      const logErrorSpy = jest.spyOn(log, 'error');
+      mockServer.use(http.post(`${LOYALTY_URL}/loyalty/redemption/lock`, () => HttpResponse.error()));
+
+      const result = await mockGiftCardService.finalize(finalizeOpts);
+
+      expect(result).toStrictEqual({ result: 'Success' });
+      expect(logErrorSpy).toHaveBeenCalledWith(
+        'Could not lock the loyalty reservation for final submission; proceeding without it.',
+        expect.objectContaining({ paymentId: 'redeemed-payment-id', action: 'finalize' }),
+      );
+    });
+  });
+
   describe('modifyPayment', () => {
     test('capturePayment', async () => {
       // Given
@@ -1181,7 +1271,7 @@ describe('mock-giftcard.service', () => {
     });
 
     test.each(['cancelPayment', 'reversePayment', 'refundPayment'] as const)(
-      '%s reverts the coverage and then closes the hold',
+      '%s closes the hold and then reverts the coverage',
       async (action) => {
         setupLoyaltyConfig();
         const callOrder: string[] = [];
@@ -1205,7 +1295,7 @@ describe('mock-giftcard.service', () => {
 
         const result = await mockGiftCardService.modifyPayment(modifyPaymentOptsFor(action));
 
-        expect(callOrder).toStrictEqual(['updatePayment', 'void']);
+        expect(callOrder).toStrictEqual(['void', 'updatePayment']);
         expect(updatePayment).toHaveBeenCalledWith({
           id: getPaymentResultOk.id,
           transaction: {
@@ -1216,6 +1306,36 @@ describe('mock-giftcard.service', () => {
         });
         expect(voidBody).toStrictEqual({ paymentId: getPaymentResultOk.id });
         expect(result?.outcome).toStrictEqual('approved');
+      },
+    );
+
+    // The one failure the reordering exists for: a competing checkout tab has this exact
+    // reservation locked for its own final submission, so reverting coverage here would corrupt
+    // what that tab's card leg already read. Must abort before commercetools moves at all.
+    test.each(['cancelPayment', 'reversePayment', 'refundPayment'] as const)(
+      '%s aborts before reverting coverage when the hold is locked for finalization',
+      async (action) => {
+        setupLoyaltyConfig();
+        jest.spyOn(DefaultPaymentService.prototype, 'getPayment').mockResolvedValue(getPaymentResultOk);
+        const updatePayment = jest.spyOn(DefaultPaymentService.prototype, 'updatePayment');
+
+        mockServer.use(
+          http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
+            HttpResponse.json(
+              {
+                error: 'Reservation is locked for final submission until 2026-01-01T00:00:00',
+                lockedUntil: '2026-01-01T00:00:00',
+              },
+              { status: 409 },
+            ),
+          ),
+        );
+
+        const result = mockGiftCardService.modifyPayment(modifyPaymentOptsFor(action));
+
+        await expect(result).rejects.toThrow(MockCustomError);
+        await expect(result).rejects.toMatchObject({ code: 'FinalizationInProgress' });
+        expect(updatePayment).not.toHaveBeenCalled();
       },
     );
 

@@ -17,7 +17,13 @@ import {
   ReversePaymentRequest,
 } from './types/operation.type';
 import { AmountSchemaDTO, PaymentModificationStatus } from '../dtos/operations/payment-intents.dto';
-import { BalanceResponseSchemaDTO, RedeemRequestDTO, RedeemResponseDTO } from '../dtos/mock-giftcards.dto';
+import {
+  BalanceResponseSchemaDTO,
+  FinalizeRequestDTO,
+  FinalizeResponseDTO,
+  RedeemRequestDTO,
+  RedeemResponseDTO,
+} from '../dtos/mock-giftcards.dto';
 import { getConfig } from '../config/config';
 import { appLogger, paymentSDK } from '../payment-sdk';
 import { AbstractGiftCardService } from './abstract-giftcard.service';
@@ -340,6 +346,37 @@ export class MockGiftCardService extends AbstractGiftCardService {
   }
 
   /**
+   * Called by the storefront right before it submits the checkout's final payment, so a second tab
+   * cannot void-and-recreate this reservation while a card leg elsewhere may already have read its
+   * amount (see the loyalty backend's RedemptionHoldService#lockForFinalization).
+   *
+   * Best-effort from here down: a 409 means a genuine competing finalize attempt is in flight and
+   * must fail the checkout, exactly the race this call exists to catch. Anything else (backend
+   * unreachable, the reservation already gone) is logged and swallowed — the reservation itself
+   * still stands or has already resolved on its own, and refusing to check out over an extra safety
+   * net that could not be applied would be worse than proceeding without it.
+   */
+  async finalize(opts: { data: FinalizeRequestDTO }): Promise<FinalizeResponseDTO> {
+    try {
+      await LoyaltyAPI().lock({ paymentId: opts.data.paymentId });
+    } catch (e) {
+      if (e instanceof LoyaltyApiError && e.status === 409) {
+        throw new MockCustomError({
+          message: 'this reservation is already being finalized elsewhere',
+          code: 409,
+          key: 'FinalizationInProgress',
+        });
+      }
+      log.error('Could not lock the loyalty reservation for final submission; proceeding without it.', {
+        paymentId: opts.data.paymentId,
+        action: 'finalize',
+        error: e instanceof LoyaltyApiError ? e.message : String(e),
+      });
+    }
+    return { result: 'Success' };
+  }
+
+  /**
    * Nothing to capture in phase 1: the Charge is written at redeem, and the loyalty backend books
    * the debit itself from the order signal. A call arriving here means something is wired up that
    * should not be, so it stays an alarm rather than a silent no-op.
@@ -517,15 +554,17 @@ export class MockGiftCardService extends AbstractGiftCardService {
   }
 
   /**
-   * Reverting the coverage comes first: a Refund in state Success makes the SDK count the whole
-   * payment as 0 towards the cart, which is the outcome the customer asked for.
+   * Closing the reservation comes first now, the reverse of this method's previous order: reverting
+   * coverage in commercetools before the ledger side is closed let a second checkout tab revert this
+   * payment's coverage while another tab's finalize lock (RedemptionHoldService#lockForFinalization)
+   * was still in force — the ledger stayed correctly protected, but the card leg elsewhere had
+   * already read (and would go on to charge) coverage that CT no longer actually had. Closing first
+   * means a lock conflict is caught before commercetools moves at all.
    *
-   * Closing the reservation afterwards IS a ledger operation - it is what credits the points back, so
-   * a failure here leaves the customer's points debited for a payment that no longer covers anything.
-   * The operation still reports success, because the coverage the customer asked us to remove is
-   * already gone and re-running this would not help; the loyalty backend's reconciliation sweep
-   * recovers the points at TTL. But that is a delay measured in TTLs, not a non-event, so it is
-   * logged as an error rather than a warning.
+   * Any OTHER void failure keeps this method's original promise: it is logged and coverage is still
+   * reverted, recovering the ledger side at the sweep's TTL. Only the lock conflict is the one
+   * failure that must abort before coverage moves rather than merely being logged - see
+   * {@link voidHoldBeforeRevertingCoverage}.
    */
   private async revertCoverageAndCloseHold(opts: {
     payment: Payment;
@@ -537,6 +576,8 @@ export class MockGiftCardService extends AbstractGiftCardService {
       action: opts.action,
     });
 
+    await this.voidHoldBeforeRevertingCoverage(opts.payment.id, opts.action);
+
     await this.ctPaymentService.updatePayment({
       id: opts.payment.id,
       transaction: {
@@ -545,8 +586,6 @@ export class MockGiftCardService extends AbstractGiftCardService {
         state: 'Success',
       },
     });
-
-    await this.closeHold(opts.payment.id, opts.action);
 
     log.info(`Payment modification completed.`, {
       paymentId: opts.payment.id,
@@ -558,5 +597,34 @@ export class MockGiftCardService extends AbstractGiftCardService {
       outcome: PaymentModificationStatus.APPROVED,
       pspReference: opts.payment.id,
     };
+  }
+
+  /**
+   * The one failure {@link revertCoverageAndCloseHold} must not paper over: a competing finalize
+   * attempt elsewhere has this exact reservation locked, so reverting coverage here would corrupt
+   * what that attempt already read. Every other failure (backend unreachable, already closed) is
+   * logged and swallowed, matching {@link closeHold} — the loyalty backend's reconciliation sweep
+   * recovers the ledger side at TTL, and coverage should still be reverted as the caller asked.
+   */
+  private async voidHoldBeforeRevertingCoverage(paymentId: string, action: string): Promise<void> {
+    try {
+      await LoyaltyAPI().voidHold({ paymentId });
+    } catch (e) {
+      if (e instanceof LoyaltyApiError && e.status === 409 && e.body?.lockedUntil) {
+        throw new MockCustomError({
+          message: 'this reservation is being finalized elsewhere and cannot be changed right now',
+          code: 409,
+          key: 'FinalizationInProgress',
+        });
+      }
+      log.error(
+        `Could not release the loyalty reservation before reverting coverage: the points stay debited until the backend's sweep recovers them at TTL.`,
+        {
+          paymentId,
+          action,
+          error: e instanceof LoyaltyApiError ? e.message : String(e),
+        },
+      );
+    }
   }
 }
