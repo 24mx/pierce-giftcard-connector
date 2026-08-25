@@ -31,6 +31,9 @@ export class BalanceConverter {
       // 0 would claim "nothing is held" when the truth is "unknown", same distinction maxPoints/rate
       // already draw against a backend without a cap.
       openRedemptionPoints: opts.openHoldPoints ?? null,
+      // Same fail-closed treatment: null (not false) against a backend that hasn't shipped
+      // openHoldLocked yet, since "not locked" and "unknown" must stay distinguishable.
+      openRedemptionLocked: opts.openHoldLocked ?? null,
     };
   }
 }

@@ -143,6 +143,7 @@ describe('mock-giftcard.service', () => {
       rateToEur: 1,
       cap: { maxPoints: 2600, maxCents: 2600 },
       openHoldPoints: 0,
+      openHoldLocked: false,
       ...overrides,
     });
 
@@ -173,6 +174,7 @@ describe('mock-giftcard.service', () => {
         maxPoints: 2600,
         rate: 1,
         openRedemptionPoints: 0,
+        openRedemptionLocked: false,
       });
     });
 
@@ -234,6 +236,44 @@ describe('mock-giftcard.service', () => {
       const result = await mockGiftCardService.balance('code-from-the-widget');
 
       expect(result.openRedemptionPoints).toBeNull();
+    });
+
+    // Lets a storefront that already finalized this exact redemption (see FinalizeRequestSchema)
+    // and then reloaded mid-checkout tell its own already-committed reservation apart from one it
+    // has not finalized yet - see RedemptionHoldService#lockForFinalization in the loyalty backend.
+    test('reports the open redemption as locked once it is locked for finalization', async () => {
+      setupLoyaltyConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () =>
+          HttpResponse.json(balanceBody({ openHoldLocked: true })),
+        ),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(result.openRedemptionLocked).toStrictEqual(true);
+    });
+
+    // Same fail-closed treatment as openRedemptionPoints above: null (not false, and not a throw)
+    // against a loyalty backend that hasn't shipped openHoldLocked yet, since "not locked" and
+    // "unknown" must stay distinguishable.
+    test('reports openRedemptionLocked null when the backend answers without openHoldLocked', async () => {
+      setupLoyaltyConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      const bodyWithoutOpenHoldLocked = balanceBody();
+      delete (bodyWithoutOpenHoldLocked as Record<string, unknown>).openHoldLocked;
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () => HttpResponse.json(bodyWithoutOpenHoldLocked)),
+      );
+
+      const result = await mockGiftCardService.balance('code-from-the-widget');
+
+      expect(result.openRedemptionLocked).toBeNull();
     });
 
     // getPaymentAmount prefers taxedPrice.totalGross and subtracts what is already paid; totalPrice
@@ -365,6 +405,7 @@ describe('mock-giftcard.service', () => {
         maxPoints: 2600,
         rate: 1,
         openRedemptionPoints: 0,
+        openRedemptionLocked: false,
       });
     });
 

@@ -30,6 +30,12 @@ export const BalanceResponseSchema = Type.Object({
   // refresh), which openRedemptionId alone cannot do - it names which redemption is open, not how
   // much of it there is.
   openRedemptionPoints: Type.Union([Type.Number(), Type.Null()]),
+  // Whether openRedemptionId's own reservation is currently locked for final submission
+  // (see FinalizeRequestSchema below), or null when the backend hasn't shipped this field yet.
+  // Lets a caller (the storefront, after a page refresh) tell its own already-finalized redemption
+  // apart from one it has not finalized yet - neither openRedemptionId nor openRedemptionPoints
+  // can answer that on their own.
+  openRedemptionLocked: Type.Union([Type.Boolean(), Type.Null()]),
 });
 
 export const RedeemRequestSchema = Type.Object({

@@ -36,6 +36,13 @@ export type LoyaltyBalanceResponse = {
    * the gift card Payment into commercetools at zero, so this is the only place the amount survives.
    */
   openHoldPoints?: number;
+  /**
+   * Whether that same open reservation is currently locked for final submission (see
+   * LoyaltyClient#lock) - a real `false` when the request named a cart with an unlocked or no
+   * open hold, absent when no cart was named at all. Present so a caller can tell its own
+   * already-finalized redemption apart from one it has not finalized yet.
+   */
+  openHoldLocked?: boolean;
 };
 
 export type LoyaltyHoldRequest = {
