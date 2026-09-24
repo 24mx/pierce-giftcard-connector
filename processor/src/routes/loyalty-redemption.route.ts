@@ -3,7 +3,8 @@ import {
   SessionQueryParamAuthenticationHook,
 } from '@commercetools/connect-payments-sdk';
 import { FastifyInstance, FastifyPluginOptions } from 'fastify';
-import { MockGiftCardService } from '../services/mock-giftcard.service';
+import { Type } from '@sinclair/typebox';
+import { AbstractGiftCardService } from '../services/abstract-giftcard.service';
 import {
   BalanceRequestSchemaDTO,
   BalanceResponseSchema,
@@ -12,24 +13,22 @@ import {
   FinalizeResponseSchema,
   RedeemRequestDTO,
   RedeemResponseSchema,
-} from '../dtos/mock-giftcards.dto';
-import { Type } from '@sinclair/typebox';
+  ReleaseRequestDTO,
+  ReleaseResponseSchema,
+} from '../dtos/loyalty-redemption.dto';
 import { AmountSchema } from '../dtos/operations/payment-intents.dto';
 
 type RoutesOptions = {
-  giftCardService: MockGiftCardService;
+  giftCardService: AbstractGiftCardService;
   sessionHeaderAuthHook: SessionHeaderAuthenticationHook;
   sessionQueryParamAuthHook: SessionQueryParamAuthenticationHook;
 };
 
 /**
- * MockGiftCardServiceRoutes is used to expose endpoints for giftcard management. Since the required requests/responses/parameters may vary among different gift card service providers, here we provide sample routes for further customization.
+ * The storefront-facing surface of the redemption: every route is authenticated by the checkout
+ * session (`x-session-id`), which is also where the cart id comes from.
  */
-export const mockGiftCardServiceRoutes = async (
-  fastify: FastifyInstance,
-
-  opts: FastifyPluginOptions & RoutesOptions,
-) => {
+export const loyaltyRedemptionRoutes = async (fastify: FastifyInstance, opts: FastifyPluginOptions & RoutesOptions) => {
   fastify.post<{
     Reply: BalanceResponseSchemaDTO | void;
     Body: BalanceRequestSchemaDTO;
@@ -75,10 +74,7 @@ export const mockGiftCardServiceRoutes = async (
       },
     },
     async (request, reply) => {
-      const res = await opts.giftCardService.redeem({
-        data: request.body,
-      });
-
+      const res = await opts.giftCardService.redeem({ data: request.body });
       return reply.status(200).send(res);
     },
   );
@@ -86,7 +82,7 @@ export const mockGiftCardServiceRoutes = async (
   /**
    * Called by the storefront right before it submits the checkout's final payment, so a second tab
    * cannot void-and-recreate this reservation while a card leg elsewhere may already be reading its
-   * amount. Best-effort from the widget's point of view — see MockGiftCardService#finalize.
+   * amount. Best-effort from the storefront's point of view - see LoyaltyRedemptionService#finalize.
    */
   fastify.post<{ Body: FinalizeRequestDTO; Reply: void }>(
     '/finalize',
@@ -96,9 +92,9 @@ export const mockGiftCardServiceRoutes = async (
         body: {
           type: 'object',
           properties: {
-            paymentId: Type.String(),
+            redemptionId: Type.String(),
           },
-          required: ['paymentId'],
+          required: ['redemptionId'],
         },
         response: {
           200: FinalizeResponseSchema,
@@ -106,10 +102,31 @@ export const mockGiftCardServiceRoutes = async (
       },
     },
     async (request, reply) => {
-      const res = await opts.giftCardService.finalize({
-        data: request.body,
-      });
+      const res = await opts.giftCardService.finalize({ data: request.body });
+      return reply.status(200).send(res);
+    },
+  );
 
+  /** The storefront's "remove points from this order". Session-authenticated like /redeem. */
+  fastify.post<{ Body: ReleaseRequestDTO; Reply: void }>(
+    '/release',
+    {
+      preHandler: [opts.sessionHeaderAuthHook.authenticate()],
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            redemptionId: Type.String(),
+          },
+          required: ['redemptionId'],
+        },
+        response: {
+          200: ReleaseResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const res = await opts.giftCardService.release({ data: request.body });
       return reply.status(200).send(res);
     },
   );

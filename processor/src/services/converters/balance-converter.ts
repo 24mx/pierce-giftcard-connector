@@ -1,5 +1,5 @@
 import { LoyaltyBalanceResponse, LoyaltyCap } from '../../clients/types/loyalty.client.type';
-import { BalanceResponseSchemaDTO } from '../../dtos/mock-giftcards.dto';
+import { BalanceResponseSchemaDTO } from '../../dtos/loyalty-redemption.dto';
 
 export class BalanceConverter {
   /**

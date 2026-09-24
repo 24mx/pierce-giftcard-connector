@@ -10,6 +10,29 @@
 
 This repository provides a [connect](https://docs.commercetools.com/connect) template for giftcard integration connector. This boilerplate code acts as a starting point for integration with external giftcard service provider.
 
+## Pierce: redemption as a cart discount (approach B, 2026-09-23)
+
+This fork no longer creates a commercetools `Payment`. A points redemption is:
+
+- a **hold** in the Pierce loyalty backend (`POST /loyalty/redemption/hold`, keyed by a `redemptionId` UUID the processor mints), which debits the points at once;
+- two **custom fields on the cart** — `loyaltyRedemptionId` and `loyaltyRedemption` (a set of denomination keys such as `D1024`) — which commercetools copies onto the order;
+- the **automatic CartDiscounts** `loyalty-D1 … loyalty-D131072` (powers of two of the minor unit, `stackingMode: Stacking`, `target: totalPrice`, predicate `custom.loyaltyRedemption contains "Dn"`) that those keys unlock. Any amount up to 262,143 minor units is composed from them.
+
+Routes (all session-authenticated via `x-session-id`):
+
+| Route | What it does |
+|---|---|
+| `POST /balance` | Spendable points and the cart cap, measured against the cart's *undiscounted* total. `openRedemptionId` is read off the cart's custom field. |
+| `POST /redeem` | Releases any redemption the cart already carries, holds the new amount, writes the two fields and verifies the cart's gross total dropped by exactly the requested amount. Anything else voids the hold, clears the fields and answers `409 DiscountNotApplied`. |
+| `POST /finalize` | Locks the hold for the checkout's final submission. |
+| `POST /release` | The storefront's "remove points": voids the hold, then clears the fields. |
+
+`POST /payment-intents/:id` operations (capture/cancel/refund/reverse) are alarms: no Payment exists for commercetools to route.
+
+`npm run connector:post-deploy` provisions the cart Type and the 18 discounts idempotently (see `processor/src/connectors/loyalty-provisioning.ts`); it needs `manage_types` and `manage_cart_discounts`. The loyalty backend reads the same field names and discount-key prefix (`loyalty.redemption.commercetools.*` in `pierce-loyalty`), so both deployments must agree on the field names and the key prefix (`LOYALTY_REDEMPTION_ID_FIELD` / `LOYALTY_DENOMINATIONS_FIELD` / `LOYALTY_DISCOUNT_KEY_PREFIX` here; `LOYALTY_REDEMPTION_ID_FIELD` / `LOYALTY_REDEMPTION_DENOMINATIONS_FIELD` / `LOYALTY_REDEMPTION_DISCOUNT_KEY_PREFIX` in the backend). `LOYALTY_CART_TYPE_KEY` matters to this connector only. **Cutover:** the backend contract switched from `paymentId` to `redemptionId` at the same time, so the two deployments ship together, after open holds on the old model have drained (one TTL plus a sweep).
+
+Who tests what across the backend, this connector and the storefront, and how the storefront team can test against a deployed processor: see [`TESTING.md`](TESTING.md).
+
 ## Template Features
 - Typescript language supported.
 - Uses Fastify as web server framework.

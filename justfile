@@ -154,7 +154,7 @@ build:
 check: lint build test
 
 # Mints a Checkout session for a fresh EUR cart, then balance -> redeem -> cancel -> insufficient.
-# Writes real Cart/Session/Payment objects. Needs `just processor` and the loyalty backend running.
+# Writes real Cart/Session objects (and the cart custom fields). Needs `just processor` and the loyalty backend running.
 # Drive the whole connector flow against the sandbox.
 e2e url=processor_url:
     node processor/scripts/e2e-checkout-flow.mjs processor/.env {{url}}
@@ -256,12 +256,12 @@ points-add user="demo@example.com" points="5000" base=loyalty_url:
     echo
 
 # Release a hold that a test left behind.
-points-void payment base=loyalty_url:
+points-void redemption base=loyalty_url:
     #!/usr/bin/env bash
     set -eo pipefail
     # The key lives in processor/.env, not in your shell — an exported one still wins if you set it.
     key="$(just env-value LOYALTY_API_KEY)"
     auth=(); [ -n "$key" ] && auth=(-H "X-Api-Key: $key")
     curl -s -X POST "${auth[@]}" -H 'Content-Type: application/json' \
-      -d '{"paymentId":"{{payment}}"}' "{{base}}/loyalty/redemption/void"
+      -d '{"redemptionId":"{{redemption}}"}' "{{base}}/loyalty/redemption/void"
     echo

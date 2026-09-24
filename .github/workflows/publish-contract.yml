@@ -1,0 +1,38 @@
+name: Publish contract
+
+# Publishes packages/loyalty-connector-contract to GitHub Packages when a tag contract-vX.Y.Z is
+# pushed. The tag must equal the package.json version, or the job fails before publishing.
+on:
+  push:
+    tags:
+      - 'contract-v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/loyalty-connector-contract
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://npm.pkg.github.com
+          cache: npm
+          cache-dependency-path: packages/loyalty-connector-contract/package-lock.json
+
+      - name: Tag matches package version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          test "contract-v$VERSION" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != contract-v$VERSION"; exit 1; }
+
+      - run: npm ci
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

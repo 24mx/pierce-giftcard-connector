@@ -15,9 +15,9 @@ export const BalanceResponseSchema = Type.Object({
   status: StatusSchema,
   amount: AmountSchema,
   points: Type.Number(),
-  // The CT Payment id of an already-open giftcard redemption on this cart, if one exists - null
-  // otherwise. Lets a caller reconstruct "a redemption is active" state after losing it client-side
-  // (e.g. a page refresh mid-checkout), without guessing at commercetools payment internals itself.
+  // The redemption id the cart's custom field already carries, if any - null otherwise. Lets a caller
+  // reconstruct "a redemption is active" state after losing it client-side (e.g. a page refresh
+  // mid-checkout) without reading commercetools itself.
   openRedemptionId: Type.Union([Type.String(), Type.Null()]),
   // The redeemable cap for THIS cart (balance capped by what the cart still asks for and the card
   // floor) and the precise cents-per-point rate in `amount.currencyCode` - not the full spendable
@@ -32,9 +32,6 @@ export const BalanceResponseSchema = Type.Object({
   openRedemptionPoints: Type.Union([Type.Number(), Type.Null()]),
   // Whether openRedemptionId's own reservation is currently locked for final submission
   // (see FinalizeRequestSchema below), or null when the backend hasn't shipped this field yet.
-  // Lets a caller (the storefront, after a page refresh) tell its own already-finalized redemption
-  // apart from one it has not finalized yet - neither openRedemptionId nor openRedemptionPoints
-  // can answer that on their own.
   openRedemptionLocked: Type.Union([Type.Boolean(), Type.Null()]),
 });
 
@@ -45,22 +42,33 @@ export const RedeemRequestSchema = Type.Object({
 
 export const RedeemResponseSchema = Type.Object({
   result: Type.String(),
-  paymentReference: Type.String(),
+  // The UUID this connector minted and wrote onto the cart's loyaltyRedemptionId field - the hold's
+  // key in the loyalty backend, and the id /finalize and /release take.
   redemptionId: Type.String(),
   points: Type.Number(),
+  // What commercetools actually took off the cart's gross total once the denominations were applied.
+  // Always equals the requested amount on a 200: anything else is a 409 DiscountNotApplied instead.
+  appliedAmount: AmountSchema,
 });
 
 export const BalanceRequestSchema = Type.Object({
   code: Type.String(),
 });
 
-// paymentId is redemptionId from RedeemResponseSchema above - the commercetools payment id the hold
-// is keyed on, which is the only reference the loyalty backend hands out for a redemption.
 export const FinalizeRequestSchema = Type.Object({
-  paymentId: Type.String(),
+  redemptionId: Type.String(),
 });
 
 export const FinalizeResponseSchema = Type.Object({
+  result: Type.String(),
+});
+
+/** Takes the redemption off the cart and gives the points back; the storefront's "remove points" action. */
+export const ReleaseRequestSchema = Type.Object({
+  redemptionId: Type.String(),
+});
+
+export const ReleaseResponseSchema = Type.Object({
   result: Type.String(),
 });
 
@@ -70,3 +78,5 @@ export type BalanceRequestSchemaDTO = Static<typeof BalanceRequestSchema>;
 export type BalanceResponseSchemaDTO = Static<typeof BalanceResponseSchema>;
 export type FinalizeRequestDTO = Static<typeof FinalizeRequestSchema>;
 export type FinalizeResponseDTO = Static<typeof FinalizeResponseSchema>;
+export type ReleaseRequestDTO = Static<typeof ReleaseRequestSchema>;
+export type ReleaseResponseDTO = Static<typeof ReleaseResponseSchema>;

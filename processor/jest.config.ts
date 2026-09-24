@@ -28,6 +28,9 @@ module.exports = {
       },
     ],
   },
+  // The system suite (test/system/*.system.spec.ts) needs a deployed processor; it has its own
+  // config (jest.system.config.ts). Its support code's unit tests (env.spec.ts) still run here.
+  testPathIgnorePatterns: ['/node_modules/', '\\.system\\.spec\\.ts$'],
   transformIgnorePatterns: [
     'node_modules/(?!(msw|@mswjs|@open-draft|@bundled-es-modules|@ungap|rettime|until-async|strict-event-emitter|headers-polyfill|outvariant|is-node-process|graphql|jose)/)',
   ],

@@ -1,0 +1,10 @@
+{
+  "status": { "state": "Valid" },
+  "amount": { "centAmount": 2600, "currencyCode": "EUR" },
+  "points": 2600,
+  "openRedemptionId": null,
+  "maxPoints": 2400,
+  "rate": 1,
+  "openRedemptionPoints": null,
+  "openRedemptionLocked": null
+}

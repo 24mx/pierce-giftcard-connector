@@ -105,7 +105,18 @@ const createDeployment = async (loyaltyUrl) => {
           { key: 'CTP_JWT_ISSUER', value: env.CTP_JWT_ISSUER },
           { key: 'LOYALTY_API_URL', value: loyaltyUrl.replace(/\/$/, '') },
           { key: 'LOYALTY_TIMEOUT_MS', value: env.LOYALTY_TIMEOUT_MS || '5000' },
-          { key: 'GIFTCARD_ZERO_CT_COVERAGE', value: env.GIFTCARD_ZERO_CT_COVERAGE || 'false' },
+          // The redemption's cart fields and discount catalogue; only sent when overridden, so the
+          // connect.yaml defaults (which the loyalty backend's defaults mirror) apply otherwise.
+          ...[
+            'LOYALTY_CART_TYPE_KEY',
+            'LOYALTY_REDEMPTION_ID_FIELD',
+            'LOYALTY_DENOMINATIONS_FIELD',
+            'LOYALTY_DISCOUNT_KEY_PREFIX',
+            'LOYALTY_DISCOUNT_CURRENCIES',
+            'LOYALTY_DISCOUNT_SORT_ORDER_BASE',
+          ]
+            .filter((key) => env[key])
+            .map((key) => ({ key, value: env[key] })),
         ],
         securedConfiguration: [
           { key: 'CTP_CLIENT_SECRET', value: env.CTP_CLIENT_SECRET },

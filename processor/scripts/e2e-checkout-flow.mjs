@@ -27,7 +27,7 @@ const show = async (res) => {
   }
 };
 const spendable = async (label) => {
-  const r = await fetch(`${LOYALTY}/loyalty/giftcard/balance?userId=${encodeURIComponent(USER)}&currency=EUR`, {
+  const r = await fetch(`${LOYALTY}/loyalty/redemption/balance?userId=${encodeURIComponent(USER)}&currency=EUR`, {
     headers: LOYALTY_HEADERS,
   });
   if (!r.ok) {
@@ -96,7 +96,13 @@ const sessionHeaders = { 'Content-Type': 'application/json', 'X-Session-Id': ses
 await spendable('before');
 
 step(4, 'POST /balance through the connector');
-await show(await fetch(`${PROCESSOR}/balance`, { method: 'POST', headers: sessionHeaders, body: JSON.stringify({ code: 'ignored-by-design' }) }));
+await show(
+  await fetch(`${PROCESSOR}/balance`, {
+    method: 'POST',
+    headers: sessionHeaders,
+    body: JSON.stringify({ code: 'ignored-by-design' }),
+  }),
+);
 
 step(5, 'POST /redeem 2400 through the connector');
 const redeem = await show(
@@ -108,40 +114,38 @@ const redeem = await show(
 );
 await spendable('after redeem');
 
-if (redeem?.paymentReference) {
-  step(6, 'inspect the Payment written into commercetools');
-  const pay = await (
-    await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/payments/${redeem.paymentReference}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-  ).json();
-  console.log(`   interface=${pay.paymentMethodInfo?.paymentInterface} method=${pay.paymentMethodInfo?.method}`);
-  console.log(`   amountPlanned=${pay.amountPlanned?.centAmount} ${pay.amountPlanned?.currencyCode}`);
-  console.log(`   transactions=${JSON.stringify(pay.transactions?.map((t) => `${t.type}/${t.state} ${t.amount.centAmount}`))}`);
-
+if (redeem?.redemptionId) {
+  step(6, 'inspect the redemption written onto the cart');
   const cartAfter = await (
     await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/carts/${cart.id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
   ).json();
-  console.log(`   cart payments=${JSON.stringify(cartAfter.paymentInfo?.payments?.map((p) => p.id))}`);
+  console.log(`   custom fields=${JSON.stringify(cartAfter.custom?.fields)}`);
+  console.log(`   totalPrice=${cartAfter.totalPrice?.centAmount} ${cartAfter.totalPrice?.currencyCode}`);
+  console.log(
+    `   discountOnTotalPrice=${JSON.stringify(cartAfter.discountOnTotalPrice?.includedDiscounts?.map((d) => `${d.discount.id}: ${d.discountedAmount.centAmount}`))}`,
+  );
+  console.log(`   appliedAmount reported by the connector=${redeem.appliedAmount?.centAmount}`);
 
-  step(7, 'POST /payment-intents cancelPayment (customer removes the points)');
+  step(7, 'POST /release (customer removes the points)');
   await show(
-    await fetch(`${PROCESSOR}/operations/payment-intents/${redeem.paymentReference}`, {
+    await fetch(`${PROCESSOR}/release`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ actions: [{ action: 'cancelPayment' }] }),
+      headers: sessionHeaders,
+      body: JSON.stringify({ redemptionId: redeem.redemptionId }),
     }),
   );
-  await spendable('after cancel');
+  await spendable('after release');
 
-  const payFinal = await (
-    await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/payments/${redeem.paymentReference}`, {
+  const cartFinal = await (
+    await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/carts/${cart.id}`, {
       headers: { Authorization: `Bearer ${token}` },
     })
   ).json();
-  console.log(`   transactions=${JSON.stringify(payFinal.transactions?.map((t) => `${t.type}/${t.state} ${t.amount.centAmount}`))}`);
+  console.log(
+    `   custom fields=${JSON.stringify(cartFinal.custom?.fields)} totalPrice=${cartFinal.totalPrice?.centAmount}`,
+  );
 }
 
 step(8, 'insufficient points: redeem more than spendable');

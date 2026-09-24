@@ -55,7 +55,7 @@ export class LoyaltyClient {
   /**
    * Reserves points for a payment: the backend debits them immediately and refuses the call when the
    * balance cannot cover it (409) or when the reservation would leave less than EUR 1 payable by card
-   * (400). Idempotent on `paymentId` — a replay returns the existing reservation and debits nothing
+   * (400). Idempotent on `redemptionId` — a replay returns the existing reservation and debits nothing
    * extra.
    */
   public async hold(request: LoyaltyHoldRequest): Promise<LoyaltyHoldResponse> {

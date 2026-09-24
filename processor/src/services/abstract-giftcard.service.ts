@@ -14,7 +14,15 @@ import {
   StatusResponse,
 } from './types/operation.type';
 import { PaymentIntentResponseSchemaDTO } from '../dtos/operations/payment-intents.dto';
-import { BalanceResponseSchemaDTO, RedeemRequestDTO, RedeemResponseDTO } from '../dtos/mock-giftcards.dto';
+import {
+  BalanceResponseSchemaDTO,
+  RedeemRequestDTO,
+  RedeemResponseDTO,
+  FinalizeRequestDTO,
+  FinalizeResponseDTO,
+  ReleaseRequestDTO,
+  ReleaseResponseDTO,
+} from '../dtos/loyalty-redemption.dto';
 
 export abstract class AbstractGiftCardService {
   protected ctCartService: CommercetoolsCartService;
@@ -48,6 +56,12 @@ export abstract class AbstractGiftCardService {
    * @returns
    */
   abstract redeem(opt: { data: RedeemRequestDTO }): Promise<RedeemResponseDTO>;
+
+  /** Lock the redemption for the checkout's final submission (storefront-initiated). */
+  abstract finalize(opt: { data: FinalizeRequestDTO }): Promise<FinalizeResponseDTO>;
+
+  /** Take a redemption off the cart and give the points back (storefront-initiated). */
+  abstract release(opt: { data: ReleaseRequestDTO }): Promise<ReleaseResponseDTO>;
 
   /**
    * Capture payment

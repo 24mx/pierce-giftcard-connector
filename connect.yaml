@@ -22,7 +22,7 @@ deployAs:
           required: true
           default: https://session.europe-west1.gcp.commercetools.com
         - key: CTP_CLIENT_ID
-          description: commercetools client ID with manage_payments, manage_orders, view_sessions, view_api_clients, manage_checkout_payment_intents & introspect_oauth_tokens scopes
+          description: commercetools client ID with manage_orders (cart custom fields), manage_types & manage_cart_discounts (post-deploy provisioning), view_sessions, view_api_clients, manage_checkout_payment_intents & introspect_oauth_tokens scopes
           required: true
         - key: CTP_JWKS_URL
           description: JWKs url (example - https://mc-api.europe-west1.gcp.commercetools.com/.well-known/jwks.json)
@@ -39,10 +39,30 @@ deployAs:
           description: Timeout for calls to the loyalty backend, kept well under the widget's patience
           required: false
           default: "5000"
-        - key: GIFTCARD_ZERO_CT_COVERAGE
-          description: TEMPORARY workaround for the Briqpay card connector's VAT cross-check, which rejects whenever another payment already reduces what it is asked to cover. Zeroes this connector's CT-side coverage amount; the real loyalty hold is unaffected, but the card leg then covers the cart's full total again. Leave false once Briqpay prorates its own amount.
+        - key: LOYALTY_CART_TYPE_KEY
+          description: Key of the cart custom Type carrying the redemption fields (created or extended by post-deploy)
           required: false
-          default: "false"
+          default: pierce-loyalty-cart
+        - key: LOYALTY_REDEMPTION_ID_FIELD
+          description: Name of the cart custom field carrying the redemption id; the loyalty backend must read the same name
+          required: false
+          default: loyaltyRedemptionId
+        - key: LOYALTY_DENOMINATIONS_FIELD
+          description: Name of the cart custom field carrying the discount denomination keys; the loyalty backend must read the same name
+          required: false
+          default: loyaltyRedemption
+        - key: LOYALTY_DISCOUNT_KEY_PREFIX
+          description: Key prefix of the 18 denomination CartDiscounts; the loyalty backend must use the same prefix
+          required: false
+          default: loyalty-
+        - key: LOYALTY_DISCOUNT_CURRENCIES
+          description: Comma-separated currencies the 18 denomination CartDiscounts carry a Money entry for
+          required: false
+          default: EUR
+        - key: LOYALTY_DISCOUNT_SORT_ORDER_BASE
+          description: Prefix of the denomination discounts' sortOrder (index appended); keep below every marketing promotion
+          required: false
+          default: "0.000001"
       securedConfiguration:
         - key: CTP_CLIENT_SECRET
           description: commercetools client secret

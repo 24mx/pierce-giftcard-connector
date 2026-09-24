@@ -1,5 +1,9 @@
+/**
+ * Deliberately a no-op. The cart Type and the denomination CartDiscounts stay behind on undeploy:
+ * orders already carry references to them, and a redeploy converges onto the same objects anyway.
+ */
 async function preUndeploy() {
-  // TODO: Implement pre undeploy scripts if any
+  // Nothing to tear down.
 }
 
 async function run() {
@@ -7,7 +11,7 @@ async function run() {
     await preUndeploy();
   } catch (error) {
     if (error instanceof Error) {
-      process.stderr.write(`Post-undeploy failed: ${error.message}\n`);
+      process.stderr.write(`Pre-undeploy failed: ${error.message}\n`);
     }
     process.exitCode = 1;
   }

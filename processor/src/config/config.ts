@@ -20,11 +20,21 @@ export const config = {
   // Shared secret for /loyalty/**. Empty means the backend is unsecured - fine on a laptop only.
   loyaltyApiKey: process.env.LOYALTY_API_KEY || '',
 
-  // TEMPORARY workaround, see redeem() in mock-giftcard.service.ts: zeroes the CT-side amount of
-  // the redeem Payment so it no longer reduces what commercetools Checkout asks the card connector
-  // to cover, working around a VAT cross-check that connector does on its own. The real loyalty
-  // hold is unaffected. Drop this flag once that connector prorates its own amount instead.
-  giftcardZeroCtCoverage: process.env.GIFTCARD_ZERO_CT_COVERAGE === 'true',
+  // The redemption's projection onto the commercetools cart. The loyalty backend reads the same field
+  // names off the order (loyalty.redemption.commercetools.* in pierce-loyalty), so the two deployments
+  // must agree on them. The Type is created by the post-deploy hook; point LOYALTY_CART_TYPE_KEY at the
+  // storefront's own cart type instead if carts already carry one, and the hook extends that type.
+  loyaltyCartTypeKey: process.env.LOYALTY_CART_TYPE_KEY || 'pierce-loyalty-cart',
+  loyaltyRedemptionIdField: process.env.LOYALTY_REDEMPTION_ID_FIELD || 'loyaltyRedemptionId',
+  loyaltyDenominationsField: process.env.LOYALTY_DENOMINATIONS_FIELD || 'loyaltyRedemption',
+  // The automatic CartDiscounts that carry the points: loyalty-D1 … loyalty-D131072, one Money entry
+  // per currency listed here, sortOrder below every marketing promotion.
+  loyaltyDiscountKeyPrefix: process.env.LOYALTY_DISCOUNT_KEY_PREFIX || 'loyalty-',
+  loyaltyDiscountCurrencies: (process.env.LOYALTY_DISCOUNT_CURRENCIES || 'EUR')
+    .split(',')
+    .map((currency) => currency.trim().toUpperCase())
+    .filter((currency) => currency.length === 3),
+  loyaltyDiscountSortOrderBase: process.env.LOYALTY_DISCOUNT_SORT_ORDER_BASE || '0.000001',
 
   // Required by logger
   loggerLevel: process.env.LOGGER_LEVEL || 'info',

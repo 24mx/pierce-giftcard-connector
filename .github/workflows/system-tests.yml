@@ -1,0 +1,57 @@
+name: System tests
+
+# Drives the DEPLOYED staging processor + loyalty backend + commercetools project through the API
+# (processor/test/system). Runs nightly, by hand, and from the backend's deploy pipeline via
+# workflow_dispatch. On success it tells the storefront repo to run its loyalty browser tests.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 4 * * 1-5'
+
+permissions:
+  contents: read
+
+concurrency:
+  # The suite toggles a shared discount and counts on the balance of its own customers only; two
+  # runs at once would still trip over the discount toggle.
+  group: loyalty-system-tests
+  cancel-in-progress: false
+
+jobs:
+  system:
+    name: System tests against staging
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: processor
+    env:
+      SYSTEM_PROCESSOR_URL: ${{ secrets.SYSTEM_PROCESSOR_URL }}
+      SYSTEM_LOYALTY_API_URL: ${{ secrets.SYSTEM_LOYALTY_API_URL }}
+      SYSTEM_LOYALTY_API_KEY: ${{ secrets.SYSTEM_LOYALTY_API_KEY }}
+      SYSTEM_CTP_PROJECT_KEY: ${{ secrets.SYSTEM_CTP_PROJECT_KEY }}
+      SYSTEM_CTP_CLIENT_ID: ${{ secrets.SYSTEM_CTP_CLIENT_ID }}
+      SYSTEM_CTP_CLIENT_SECRET: ${{ secrets.SYSTEM_CTP_CLIENT_SECRET }}
+      SYSTEM_SKU: ${{ secrets.SYSTEM_SKU }}
+      SYSTEM_COUNTRY: ${{ vars.SYSTEM_COUNTRY || 'DE' }}
+      SYSTEM_CURRENCY: ${{ vars.SYSTEM_CURRENCY || 'EUR' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: processor/package-lock.json
+
+      - run: npm ci
+      - run: npm run test:system
+
+      - name: Tell the storefront to run its loyalty browser tests
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.STOREFRONT_DISPATCH_TOKEN }}
+        run: |
+          gh api repos/${{ vars.STOREFRONT_REPO }}/dispatches \
+            -f event_type=loyalty-connector-deployed \
+            -f 'client_payload[processor_url]=${{ secrets.SYSTEM_PROCESSOR_URL }}' \
+            -f 'client_payload[connector_sha]=${{ github.sha }}'

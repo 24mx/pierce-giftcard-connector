@@ -29,7 +29,7 @@ const show = async (res) => {
   }
 };
 const spendable = async (label) => {
-  const r = await fetch(`${LOYALTY}/loyalty/giftcard/balance?userId=${encodeURIComponent(USER)}&currency=EUR`, {
+  const r = await fetch(`${LOYALTY}/loyalty/redemption/balance?userId=${encodeURIComponent(USER)}&currency=EUR`, {
     headers: LOYALTY_HEADERS,
   });
   if (!r.ok) {
@@ -80,7 +80,15 @@ const cart = await show(
       country: 'DE',
       customerEmail: USER,
       taxMode: 'External',
-      shippingAddress: { country: 'DE', firstName: 'Order', lastName: 'Signal', streetName: 'Demo Street', streetNumber: '1', postalCode: '10115', city: 'Berlin' },
+      shippingAddress: {
+        country: 'DE',
+        firstName: 'Order',
+        lastName: 'Signal',
+        streetName: 'Demo Street',
+        streetNumber: '1',
+        postalCode: '10115',
+        city: 'Berlin',
+      },
       customLineItems: [
         {
           name: { en: 'Order signal smoke test item' },
@@ -127,15 +135,17 @@ const redeem = await show(
     body: JSON.stringify({ code: 'ignored-by-design', redeemAmount: { centAmount: REDEEM, currencyCode: 'EUR' } }),
   }),
 );
-if (!redeem?.paymentReference) {
-  console.error('redeem produced no payment; nothing to settle');
+if (!redeem?.redemptionId) {
+  console.error('redeem produced no redemption; nothing to settle');
   process.exit(1);
 }
 const heldSpendable = await spendable('after redeem (held, not yet spent)');
 const ledgerHeld = await ledgerRows('after redeem');
 
 step(5, 'turn the cart into a real Order');
-const cartNow = await (await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/carts/${cart.id}`, { headers: ctHeaders })).json();
+const cartNow = await (
+  await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/carts/${cart.id}`, { headers: ctHeaders })
+).json();
 const order = await show(
   await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/orders`, {
     method: 'POST',
@@ -144,11 +154,13 @@ const order = await show(
   }),
 );
 if (!order?.id) process.exit(1);
-console.log(`   order ${order.id}  payments=${JSON.stringify(order.paymentInfo?.payments?.map((p) => p.id))}`);
+console.log(
+  `   order ${order.id}  custom=${JSON.stringify(order.custom?.fields)}  total=${order.totalPrice?.centAmount}`,
+);
 
 step(6, 'deliver the order signal (Kafka stands in here)');
 const signal = await show(
-  await fetch(`${LOYALTY}/loyalty/giftcard/order-signal`, {
+  await fetch(`${LOYALTY}/loyalty/redemption/order-signal`, {
     method: 'POST',
     headers: { ...LOYALTY_HEADERS, 'Content-Type': 'application/json' },
     body: JSON.stringify({ orderId: order.id }),
@@ -159,7 +171,7 @@ const ledgerAfter = await ledgerRows('after capture');
 
 step(7, 'replay the same signal (a consumer redelivers)');
 await show(
-  await fetch(`${LOYALTY}/loyalty/giftcard/order-signal`, {
+  await fetch(`${LOYALTY}/loyalty/redemption/order-signal`, {
     method: 'POST',
     headers: { ...LOYALTY_HEADERS, 'Content-Type': 'application/json' },
     body: JSON.stringify({ orderId: order.id }),
@@ -170,7 +182,7 @@ const ledgerReplay = await ledgerRows('after replay');
 
 step(8, 'a signal naming an order this project never had');
 const unknown = await show(
-  await fetch(`${LOYALTY}/loyalty/giftcard/order-signal`, {
+  await fetch(`${LOYALTY}/loyalty/redemption/order-signal`, {
     method: 'POST',
     headers: { ...LOYALTY_HEADERS, 'Content-Type': 'application/json' },
     body: JSON.stringify({ orderId: 'not-an-order-id' }),

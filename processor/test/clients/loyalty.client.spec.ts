@@ -123,12 +123,12 @@ describe('loyalty.client', () => {
         }),
         http.post(`${LOYALTY_URL}/loyalty/redemption/void`, ({ request }) => {
           seen.push(request.headers.get('x-api-key'));
-          return HttpResponse.json({ paymentId: 'payment-1', points: 1, balance: 1 });
+          return HttpResponse.json({ redemptionId: 'payment-1', points: 1, balance: 1 });
         }),
       );
 
       await authenticated.balance({ userId: 'demo@example.com', currencyCode: 'EUR' });
-      await authenticated.voidHold({ paymentId: 'payment-1' });
+      await authenticated.voidHold({ redemptionId: 'payment-1' });
 
       expect(seen).toStrictEqual(['s3cret', 's3cret']);
     });
@@ -158,13 +158,13 @@ describe('loyalty.client', () => {
       mockServer.use(
         http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
           receivedBody = await request.json();
-          return HttpResponse.json({ paymentId: 'payment-1', points: 2400, balance: 200 });
+          return HttpResponse.json({ redemptionId: 'payment-1', points: 2400, balance: 200 });
         }),
       );
 
       const result = await client.hold({
         userId: 'demo@example.com',
-        paymentId: 'payment-1',
+        redemptionId: 'payment-1',
         cartId: 'cart-1',
         amount: { centAmount: 2400, currencyCode: 'EUR' },
         cartTotal: { centAmount: 4499, currencyCode: 'EUR' },
@@ -174,12 +174,12 @@ describe('loyalty.client', () => {
       // the rule lives in the ledger rather than only in this connector's arithmetic.
       expect(receivedBody).toStrictEqual({
         userId: 'demo@example.com',
-        paymentId: 'payment-1',
+        redemptionId: 'payment-1',
         cartId: 'cart-1',
         amount: { centAmount: 2400, currencyCode: 'EUR' },
         cartTotal: { centAmount: 4499, currencyCode: 'EUR' },
       });
-      expect(result).toStrictEqual({ paymentId: 'payment-1', points: 2400, balance: 200 });
+      expect(result).toStrictEqual({ redemptionId: 'payment-1', points: 2400, balance: 200 });
     });
 
     test('throws a LoyaltyApiError with status 409 when the points are not sufficient', async () => {
@@ -191,7 +191,7 @@ describe('loyalty.client', () => {
 
       const result = client.hold({
         userId: 'demo@example.com',
-        paymentId: 'payment-1',
+        redemptionId: 'payment-1',
         cartId: 'cart-1',
         amount: { centAmount: 999999, currencyCode: 'EUR' },
       });
@@ -210,14 +210,14 @@ describe('loyalty.client', () => {
       mockServer.use(
         http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
           receivedBody = await request.json();
-          return HttpResponse.json({ paymentId: 'payment-1', points: 2400, balance: 2600 });
+          return HttpResponse.json({ redemptionId: 'payment-1', points: 2400, balance: 2600 });
         }),
       );
 
-      const result = await client.voidHold({ paymentId: 'payment-1' });
+      const result = await client.voidHold({ redemptionId: 'payment-1' });
 
-      expect(receivedBody).toStrictEqual({ paymentId: 'payment-1' });
-      expect(result).toStrictEqual({ paymentId: 'payment-1', points: 2400, balance: 2600 });
+      expect(receivedBody).toStrictEqual({ redemptionId: 'payment-1' });
+      expect(result).toStrictEqual({ redemptionId: 'payment-1', points: 2400, balance: 2600 });
     });
 
     test('throws a LoyaltyApiError with status 404 for an unknown payment', async () => {
@@ -227,7 +227,7 @@ describe('loyalty.client', () => {
         ),
       );
 
-      const result = client.voidHold({ paymentId: 'payment-unknown' });
+      const result = client.voidHold({ redemptionId: 'payment-unknown' });
 
       await expect(result).rejects.toThrow(LoyaltyApiError);
       await expect(result).rejects.toMatchObject({ status: 404 });

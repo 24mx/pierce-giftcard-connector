@@ -1,0 +1,11 @@
+{
+  "status": {
+    "state": "FinalizationInProgress",
+    "errors": [
+      {
+        "code": "FinalizationInProgress",
+        "message": "Redemption is locked for finalization until 2026-09-24T10:00:00Z"
+      }
+    ]
+  }
+}

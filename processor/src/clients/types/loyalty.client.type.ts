@@ -31,9 +31,8 @@ export type LoyaltyBalanceResponse = {
   cap?: LoyaltyCap;
   /**
    * Points already committed to this cart's own open reservation, if it has one - a real `0` when
-   * the request named a cart with none, absent (not `0`) when no cart was named at all. Present for
-   * the same reason `cartId` is on the request: GIFTCARD_ZERO_CT_COVERAGE makes the connector write
-   * the gift card Payment into commercetools at zero, so this is the only place the amount survives.
+   * the request named a cart with none, absent (not `0`) when no cart was named at all. The ledger is
+   * the authority on what is committed; the cart's denomination field is only its projection.
    */
   openHoldPoints?: number;
   /**
@@ -47,7 +46,8 @@ export type LoyaltyBalanceResponse = {
 
 export type LoyaltyHoldRequest = {
   userId: string;
-  paymentId: string;
+  /** The UUID this connector minted for the redemption and writes onto the cart; the hold's idempotency key. */
+  redemptionId: string;
   cartId: string;
   amount: LoyaltyAmount;
   /**
@@ -60,13 +60,13 @@ export type LoyaltyHoldRequest = {
 
 /** Shared by hold and void: the points touched plus the resulting spendable balance. */
 export type LoyaltyHoldResponse = {
-  paymentId: string;
+  redemptionId: string;
   points: number;
   balance: number;
 };
 
 export type LoyaltyVoidRequest = {
-  paymentId: string;
+  redemptionId: string;
 };
 
 /**
@@ -74,14 +74,14 @@ export type LoyaltyVoidRequest = {
  * submission. See LoyaltyClient#lock for why this exists.
  */
 export type LoyaltyLockRequest = {
-  paymentId: string;
+  redemptionId: string;
 };
 
 /** Error body returned by the loyalty backend for every non-2xx response. */
 export type LoyaltyErrorResponse = {
   error?: string;
   /** Present only on the /hold 409 for "this cart already has a different open reservation". */
-  existingPaymentId?: string;
+  existingRedemptionId?: string;
   /** Present only on the /lock or /void 409 for "this reservation is locked for final submission". */
   lockedUntil?: string;
 };

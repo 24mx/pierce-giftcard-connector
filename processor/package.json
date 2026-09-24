@@ -14,8 +14,9 @@
     "test": "jest --detectOpenHandles",
     "test:watch": "jest --watch --detectOpenHandles",
     "test:coverage": "jest --detectOpenHandles --coverage",
-    "connector:post-deploy": "node src/connectors/post-deploy.ts",
-    "connector:pre-undeploy": "node src/connectors/pre-undeploy.ts"
+    "test:system": "jest -c jest.system.config.ts --runInBand --passWithNoTests",
+    "connector:post-deploy": "node dist/connectors/post-deploy.js",
+    "connector:pre-undeploy": "node dist/connectors/pre-undeploy.js"
   },
   "engines": {
     "node": ">=24.0.0",
@@ -45,6 +46,7 @@
     "brace-expansion@5": "5.0.9"
   },
   "devDependencies": {
+    "@commercetools/ts-client": "5.0.3",
     "@eslint/eslintrc": "3.3.6",
     "@eslint/js": "10.0.1",
     "@jest/globals": "30.4.1",
