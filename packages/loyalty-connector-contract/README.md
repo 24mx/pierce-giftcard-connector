@@ -1,11 +1,11 @@
-# @piercegroup/loyalty-connector-contract
+# @24mx/loyalty-connector-contract
 
 The storefront-facing API of the Pierce loyalty gift card connector, as data: TypeBox schemas for
 `/balance`, `/redeem`, `/finalize`, `/release`, the list of error keys, and one example per message.
 
-    npm install @piercegroup/loyalty-connector-contract
+    npm install @24mx/loyalty-connector-contract
 
-    import type { RedeemRequest, RedeemResponse, LoyaltyErrorKey } from '@piercegroup/loyalty-connector-contract';
+    import type { RedeemRequest, RedeemResponse, LoyaltyErrorKey } from '@24mx/loyalty-connector-contract';
 
 Every route takes `X-Session-Id` (a commercetools Checkout session for the shopper's cart). Errors
 come back as `{ status: { state: <key>, errors: [{ code, message }] } }`.
