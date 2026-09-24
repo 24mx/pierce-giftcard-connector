@@ -42,6 +42,7 @@ export const loyaltyRedemptionRoutes = async (fastify: FastifyInstance, opts: Fa
           properties: {
             code: Type.String(),
           },
+          required: ['code'],
         },
         response: {
           200: BalanceResponseSchema,

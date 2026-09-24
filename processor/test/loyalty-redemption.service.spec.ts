@@ -44,10 +44,19 @@ class FakeCartFields implements CartRedemptionFieldsClient {
     }
     this.writes.push(fields);
     const total = this.nextTotalAfterWrite ?? cart.totalPrice.centAmount - denominationCents(fields.denominations);
+    // A totalPrice-targeted discount comes off the gross the shopper pays as well.
+    const taxedPrice = cart.taxedPrice && {
+      ...cart.taxedPrice,
+      totalGross: {
+        ...cart.taxedPrice.totalGross,
+        centAmount: cart.taxedPrice.totalGross.centAmount - denominationCents(fields.denominations),
+      },
+    };
     const updated = {
       ...cart,
       version: cart.version + 1,
       totalPrice: { ...cart.totalPrice, centAmount: total },
+      ...(taxedPrice && { taxedPrice }),
       custom: {
         type: { typeId: 'type', id: 'loyalty-type-id' },
         fields: { loyaltyRedemptionId: fields.redemptionId, loyaltyRedemption: fields.denominations },
@@ -261,6 +270,39 @@ describe('loyalty-redemption.service', () => {
         points: 1234,
         appliedAmount: { centAmount: 1234, currencyCode: 'EUR' },
       });
+    });
+
+    test('measures the floor and the applied amount on the taxed gross, not on the net total', async () => {
+      setupConfig();
+      // A project with net prices: totalPrice is the net, taxedPrice.totalGross is what the shopper pays.
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        totalPrice: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 4200, fractionDigits: 2 },
+        taxedPrice: {
+          totalNet: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 4200, fractionDigits: 2 },
+          totalGross: { type: 'centPrecision', currencyCode: 'EUR', centAmount: 4999, fractionDigits: 2 },
+          taxPortions: [],
+        },
+      });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultCartService.prototype, 'getPaymentAmount').mockImplementation(async ({ cart: c }) => ({
+        centAmount: c.taxedPrice!.totalGross.centAmount,
+        currencyCode: c.taxedPrice!.totalGross.currencyCode,
+        fractionDigits: 2,
+      }));
+      let holdBody: Record<string, unknown> = {};
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
+          holdBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ redemptionId: holdBody.redemptionId, points: 2400, balance: 200 });
+        }),
+      );
+      // The net total moves by a different number than the gross: only the gross drop may count.
+      cartFields.nextTotalAfterWrite = 4200 - 2017;
+
+      const result = await redeem(2400);
+
+      expect(holdBody).toMatchObject({ cartTotal: { centAmount: 4999, currencyCode: 'EUR' } });
+      expect(result).toMatchObject({ result: 'Success', appliedAmount: { centAmount: 2400, currencyCode: 'EUR' } });
     });
 
     test('voids the hold and clears the cart when commercetools applied a different amount', async () => {
