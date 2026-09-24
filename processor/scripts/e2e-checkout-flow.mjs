@@ -93,7 +93,7 @@ if (!session?.id) process.exit(1);
 
 const sessionHeaders = { 'Content-Type': 'application/json', 'X-Session-Id': session.id };
 
-await spendable('before');
+const before = await spendable('before');
 
 step(4, 'POST /balance through the connector');
 await show(
@@ -149,10 +149,12 @@ if (redeem?.redemptionId) {
 }
 
 step(8, 'insufficient points: redeem more than spendable');
+// Just above the balance, and still decomposable: past 262143 the answer would be AmountNotDecomposable.
+const tooMuch = Math.min((before ?? 0) + 100, 262143);
 await show(
   await fetch(`${PROCESSOR}/redeem`, {
     method: 'POST',
     headers: sessionHeaders,
-    body: JSON.stringify({ code: 'ignored-by-design', redeemAmount: { centAmount: 999999, currencyCode: 'EUR' } }),
+    body: JSON.stringify({ code: 'ignored-by-design', redeemAmount: { centAmount: tooMuch, currencyCode: 'EUR' } }),
   }),
 );

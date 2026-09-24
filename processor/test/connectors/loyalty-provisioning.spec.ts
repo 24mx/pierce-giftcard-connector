@@ -9,6 +9,10 @@ import { denominationKeys } from '../../src/services/denominations';
 const AUTH = 'https://auth.test';
 const API = 'https://api.test';
 const PROJECT = 'test-project';
+/** The sortOrder provisioning assigns to a denomination key: `<base><two-digit index>1`. */
+const expectedSortOrder = (key: string): string =>
+  `${OPTS.sortOrderBase}${String(denominationKeys().indexOf(key.replace('loyalty-', '')) + 1).padStart(2, '0')}1`;
+
 const OPTS = {
   typeKey: 'pierce-loyalty-cart',
   redemptionIdField: 'loyaltyRedemptionId',
@@ -90,9 +94,12 @@ describe('loyalty-provisioning', () => {
       requiresDiscountCode: false,
       isActive: true,
       stackingMode: 'Stacking',
-      sortOrder: '0.00000110',
+      sortOrder: '0.000001101',
     });
     expect(new Set(discounts.map((d) => d.sortOrder)).size).toBe(18);
+    // commercetools refuses a sortOrder that ends with a zero, which a plain two-digit index would
+    // produce for the tenth denomination.
+    expect(discounts.map((d) => d.sortOrder).filter((s) => s.endsWith('0'))).toStrictEqual([]);
   });
 
   test('extends an existing type with the missing field and updates a discount whose currencies changed', async () => {
@@ -116,6 +123,7 @@ describe('loyalty-provisioning', () => {
           version: 2,
           key: params.key,
           isActive: true,
+          sortOrder: expectedSortOrder(String(params.key)),
           cartPredicate: `custom.loyaltyRedemption contains "${String(params.key).replace('loyalty-', '')}"`,
           target: { type: 'totalPrice' },
           stackingMode: 'Stacking',
@@ -193,6 +201,7 @@ describe('loyalty-provisioning', () => {
           version: 1,
           key: params.key,
           isActive: true,
+          sortOrder: '0.00000101',
           cartPredicate: `custom.oldField contains "D${cents}"`,
           target: { type: 'lineItems', predicate: '1=1' },
           stackingMode: 'StopAfterThisDiscount',
@@ -224,6 +233,7 @@ describe('loyalty-provisioning', () => {
         { action: 'changeTarget', target: { type: 'totalPrice' } },
         { action: 'changeStackingMode', stackingMode: 'Stacking' },
         { action: 'changeRequiresDiscountCode', requiresDiscountCode: false },
+        { action: 'changeSortOrder', sortOrder: '0.000001011' },
       ],
     });
   });
@@ -267,6 +277,7 @@ describe('loyalty-provisioning', () => {
           version: 1,
           key: params.key,
           isActive: true,
+          sortOrder: expectedSortOrder(String(params.key)),
           cartPredicate: `custom.loyaltyRedemption contains "D${cents}"`,
           target: { type: 'totalPrice' },
           stackingMode: 'Stacking',

@@ -30,8 +30,10 @@ type Logger = { info(message: string): void };
  * deleted here - orders reference them.
  *
  * sortOrder: every CartDiscount in a project needs a distinct value in (0, 1), higher means applied
- * first. The denominations sit at `<base><two-digit index>` (0.00000101 … 0.00000118), far below any
- * marketing promotion, so percentages come off the full price and points off the promoted price.
+ * first, and commercetools refuses a value that ends with a zero. The denominations sit at
+ * `<base><two-digit index>1` (0.000001011 … 0.000001181): the trailing 1 keeps the tenth entry
+ * legal, and the whole block stays far below any marketing promotion, so percentages come off the
+ * full price and points off the promoted price.
  */
 export async function provisionLoyaltyRedemption(
   client: ByProjectKeyRequestBuilder,
@@ -130,13 +132,14 @@ async function ensureDenominationDiscount(
     type: 'absolute',
     money: opts.currencies.map((currencyCode) => ({ currencyCode, centAmount: cents })),
   };
+  const sortOrder = `${opts.sortOrderBase}${String(index + 1).padStart(2, '0')}1`;
   const draft: CartDiscountDraft = {
     key,
     name: { en: `Loyalty points ${denomination}` },
     value,
     cartPredicate: `custom.${opts.denominationsField} contains "${denomination}"`,
     target: { type: 'totalPrice' },
-    sortOrder: `${opts.sortOrderBase}${String(index + 1).padStart(2, '0')}`,
+    sortOrder,
     isActive: true,
     requiresDiscountCode: false,
     stackingMode: 'Stacking',
@@ -165,6 +168,9 @@ async function ensureDenominationDiscount(
   }
   if (!existing.isActive) {
     actions.push({ action: 'changeIsActive', isActive: true });
+  }
+  if (existing.sortOrder !== sortOrder) {
+    actions.push({ action: 'changeSortOrder', sortOrder });
   }
   if (actions.length === 0) {
     return;

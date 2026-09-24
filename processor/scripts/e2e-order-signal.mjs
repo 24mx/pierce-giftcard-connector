@@ -146,16 +146,18 @@ step(5, 'turn the cart into a real Order');
 const cartNow = await (
   await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/carts/${cart.id}`, { headers: ctHeaders })
 ).json();
+// The signal names the order the way the order feed does: by its order number, not its CT id.
+const orderNumber = `e2e-${Date.now()}`;
 const order = await show(
   await fetch(`${env.CTP_API_URL}/${env.CTP_PROJECT_KEY}/orders`, {
     method: 'POST',
     headers: ctHeaders,
-    body: JSON.stringify({ cart: { id: cart.id, typeId: 'cart' }, version: cartNow.version }),
+    body: JSON.stringify({ cart: { id: cart.id, typeId: 'cart' }, version: cartNow.version, orderNumber }),
   }),
 );
 if (!order?.id) process.exit(1);
 console.log(
-  `   order ${order.id}  custom=${JSON.stringify(order.custom?.fields)}  total=${order.totalPrice?.centAmount}`,
+  `   order ${orderNumber} (${order.id})  custom=${JSON.stringify(order.custom?.fields)}  total=${order.totalPrice?.centAmount}`,
 );
 
 step(6, 'deliver the order signal (Kafka stands in here)');
@@ -163,7 +165,7 @@ const signal = await show(
   await fetch(`${LOYALTY}/loyalty/redemption/order-signal`, {
     method: 'POST',
     headers: { ...LOYALTY_HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderId: order.id }),
+    body: JSON.stringify({ orderId: orderNumber }),
   }),
 );
 const afterCapture = await spendable('after capture');
@@ -174,7 +176,7 @@ await show(
   await fetch(`${LOYALTY}/loyalty/redemption/order-signal`, {
     method: 'POST',
     headers: { ...LOYALTY_HEADERS, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ orderId: order.id }),
+    body: JSON.stringify({ orderId: orderNumber }),
   }),
 );
 const afterReplay = await spendable('after replay');
@@ -192,9 +194,10 @@ const unknown = await show(
 step(9, 'verdict');
 const checks = [
   ['redeem lowered spendable by ' + REDEEM, before !== null && heldSpendable === before - REDEEM],
-  ['hold alone wrote no ledger row', ledgerBefore !== null && ledgerHeld?.length === ledgerBefore.length],
+  // Provisional debit: the reservation is booked the moment it is held, so capture books nothing more.
+  ['hold wrote exactly one ledger row', ledgerBefore !== null && ledgerHeld?.length === ledgerBefore.length + 1],
   ['signal captured exactly one hold', signal?.captured === 1],
-  ['capture wrote a ledger row', ledgerAfter && ledgerHeld && ledgerAfter.length === ledgerHeld.length + 1],
+  ['capture wrote no further ledger row', ledgerAfter && ledgerHeld && ledgerAfter.length === ledgerHeld.length],
   ['spendable stayed down after capture', afterCapture === heldSpendable],
   ['replay spent nothing more', afterReplay === afterCapture && ledgerReplay?.length === ledgerAfter?.length],
   // A signal a consumer cannot retry past is worse than a slow one: it blocks the partition.

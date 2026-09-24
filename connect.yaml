@@ -4,6 +4,11 @@ deployAs:
   - name: processor
     applicationType: service
     endpoint: /
+    # Connect only runs the lifecycle scripts it is told about here; without this block the
+    # "Post-deployment setup" step is a no-op and the cart Type + denomination discounts never appear.
+    scripts:
+      postDeploy: npm install && npm run build && npm run connector:post-deploy
+      preUndeploy: npm install && npm run build && npm run connector:pre-undeploy
     configuration:
       standardConfiguration:
         - key: CTP_PROJECT_KEY
