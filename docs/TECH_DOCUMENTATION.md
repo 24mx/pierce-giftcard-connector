@@ -1,5 +1,7 @@
 # Developer documentation
 
+> This is the upstream gift card template's documentation, kept for the parts Pierce still uses (Enabler shape, session auth, operations endpoint). Pierce's processor no longer creates a Payment: points are applied as cart discounts, see "Pierce: redemption as a cart discount" in the root `README.md`.
+
 ## Overview
 
 This documentation defines a standardized approach for integrating gift card providers with commercetools Checkout. The integration pattern and structure are provided as a template, enabling gift card providers to implement their own solutions in a consistent and efficient manner. This framework ensures that gift cards are treated as a payment method , such as credit cards, ensuring a seamless checkout experience for users, streamlining the integration process and enhancing flexibility for different providers. 

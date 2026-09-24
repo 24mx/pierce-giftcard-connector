@@ -1,11 +1,5 @@
-import {
-  Amount,
-  BalanceType,
-  BaseOptions,
-  GiftCardComponent,
-  GiftCardOptions,
-  PaymentResult,
-} from '../providers/definitions';
+import { Amount, BalanceType, BaseOptions, GiftCardComponent, GiftCardOptions } from '../providers/definitions';
+import { RedeemResponseBody, toRedemptionResult } from '../providers/redemption-result';
 import { BaseComponentBuilder, DefaultComponent } from './definitions';
 import {
   addFormFieldsEventListeners,
@@ -109,12 +103,7 @@ export class FormComponent extends DefaultComponent {
         throw redeemResult;
       }
 
-      const paymentResult: PaymentResult = {
-        isSuccess: redeemResult.result,
-        paymentReference: redeemResult.paymentReference,
-      };
-
-      this.baseOptions.onComplete(paymentResult);
+      this.baseOptions.onComplete(toRedemptionResult(redeemResult as RedeemResponseBody));
     } catch (err) {
       this.baseOptions.onError(err);
     }

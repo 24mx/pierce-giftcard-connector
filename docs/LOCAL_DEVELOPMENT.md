@@ -73,8 +73,8 @@ back on its own after a reboot. `just ngrok` does not — Ctrl-C ends it and not
 
 ### Local end-to-end harnesses
 
-Both drive the locally running processor and write real Cart / Session / Payment objects into the
-sandbox project. They need `just processor` and the loyalty backend up.
+Both drive the locally running processor and write real Cart / Session objects (plus the cart's
+loyalty custom fields) into the sandbox project. They need `just processor` and the loyalty backend up.
 
 | Command | What it covers |
 |---|---|
@@ -91,7 +91,7 @@ points stay gone — an abandoned reservation is the one the sweep credits back.
 |---|---|
 | `just points-balance [user]` | spendable points — the ledger balance itself, since a reservation is already debited out of it |
 | `just points-add [user] [points]` | credits demo points, so there is something to redeem |
-| `just points-void <paymentId>` | releases a reservation a test left behind, crediting the points back |
+| `just points-void <redemptionId>` | releases a hold a test left behind, crediting the points back |
 
 ### Shipping to commercetools
 

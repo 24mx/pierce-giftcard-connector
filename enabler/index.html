@@ -125,10 +125,10 @@
             processorUrl: __VITE_PROCESSOR_URL__,
             sessionId: sessionId,
             locale: 'en',
-            onComplete: ({ isSuccess, paymentReference }) => {
-              console.log('onComplete', { isSuccess, paymentReference });
+            onComplete: ({ isSuccess, redemptionId, points, appliedAmount }) => {
+              console.log('onComplete', { isSuccess, redemptionId, points, appliedAmount });
               responseContainer.className = 'p-4 bg-white rounded shadow-sm border text-start';
-              responseContainer.innerHTML = `<pre class="mb-0">${JSON.stringify({ isSuccess, paymentReference }, null, 2)}</pre>`;
+              responseContainer.innerHTML = `<pre class="mb-0">${JSON.stringify({ isSuccess, redemptionId, points, appliedAmount }, null, 2)}</pre>`;
             },
             onError: (err) => {
               console.error('onError', err);
