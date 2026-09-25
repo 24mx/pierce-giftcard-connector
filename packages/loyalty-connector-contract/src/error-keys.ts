@@ -9,11 +9,19 @@ export const LOYALTY_ERROR_KEYS = [
   'CustomerNotIdentified',
   /** The ledger cannot cover the requested amount. */
   'InsufficientFunds',
-  /** redeemAmount.currencyCode differs from the cart's currency. */
+  /**
+   * Two cases share this key: (a) redeemAmount.currencyCode differs from the cart's currency, and
+   * (b) the cart's currency has no denomination levels configured at all — a server misconfiguration
+   * (that currency is missing from LOYALTY_DISCOUNT_STORES), not something the shopper can fix.
+   */
   'CurrencyNotMatch',
   /** A concurrent redeem on the same cart won; re-quote (the balance reports the open redemption). */
   'CartAlreadyHeld',
-  /** The amount exceeds what the denomination discounts can compose (262,143 minor units). */
+  /**
+   * The amount exceeds what the denomination discounts can compose. The ceiling is currency-dependent:
+   * it is 2^levels - 1 minor units, where `levels` is the number of binary denominations provisioned
+   * for that currency's Store (configured per Store in LOYALTY_DISCOUNT_STORES).
+   */
   'AmountNotDecomposable',
   /** commercetools did not take the amount off the cart; the hold was voided, nothing was kept. */
   'DiscountNotApplied',
