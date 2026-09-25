@@ -51,7 +51,7 @@ describe('loyalty-provisioning', () => {
   afterEach(() => server.resetHandlers());
   afterAll(() => server.close());
 
-  test('creates the cart type and one store-scoped denomination set per store, sized to that store\'s levels', async () => {
+  test("creates the cart type and one store-scoped denomination set per store, sized to that store's levels", async () => {
     const created: { url: string; body: Record<string, unknown> }[] = [];
     server.use(
       http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, notFound),
@@ -127,7 +127,6 @@ describe('loyalty-provisioning', () => {
       http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) => {
         const denomination = String(params.key).replace('loyalty-lu-', '');
         const index = denominationKeys(18).indexOf(denomination);
-        const sortOrder = `0.000001${String(index + 1).padStart(2, '0')}1`;
         return HttpResponse.json({
           id: `id-${params.key}`,
           version: 2,
@@ -156,7 +155,9 @@ describe('loyalty-provisioning', () => {
     expect(updates).toHaveLength(18);
     expect(updates[0].body).toMatchObject({
       version: 2,
-      actions: [{ action: 'changeValue', value: { type: 'absolute', money: [{ currencyCode: 'EUR', centAmount: 1 }] } }],
+      actions: [
+        { action: 'changeValue', value: { type: 'absolute', money: [{ currencyCode: 'EUR', centAmount: 1 }] } },
+      ],
     });
   });
 
