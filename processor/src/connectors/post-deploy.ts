@@ -3,9 +3,10 @@ import { getConfig } from '../config/config';
 import { provisionLoyaltyRedemption } from './loyalty-provisioning';
 
 /**
- * Connect runs this once per deployment. It converges the project onto what the redemption needs -
- * the cart Type with the two custom fields and the 18 denomination CartDiscounts - and is safe to
- * re-run: existing objects are extended or left alone, never recreated.
+ * Connect runs this once per deployment. It converges every configured store onto what the
+ * redemption needs there - the shared cart Type with the two custom fields, and that store's own
+ * scoped set of denomination CartDiscounts - and is safe to re-run: existing objects are extended or
+ * left alone, never recreated.
  */
 async function postDeploy() {
   const config = getConfig();
@@ -16,7 +17,7 @@ async function postDeploy() {
       redemptionIdField: config.loyaltyRedemptionIdField,
       denominationsField: config.loyaltyDenominationsField,
       discountKeyPrefix: config.loyaltyDiscountKeyPrefix,
-      currencies: config.loyaltyDiscountCurrencies,
+      stores: config.loyaltyDiscountStores,
       sortOrderBase: config.loyaltyDiscountSortOrderBase,
     },
     { info: (message) => process.stdout.write(`${message}\n`) },
