@@ -29,7 +29,30 @@ describe('denominations', () => {
     // extra levels are actually reachable, not just declared. Both vectors are the true binary
     // decomposition (verified with a throwaway Python script, not hand-computed) — do not "simplify".
     [1303051, 21, ['D1048576', 'D131072', 'D65536', 'D32768', 'D16384', 'D8192', 'D512', 'D8', 'D2', 'D1']],
-    [3014645, 22, ['D2097152', 'D524288', 'D262144', 'D65536', 'D32768', 'D16384', 'D8192', 'D4096', 'D2048', 'D1024', 'D512', 'D256', 'D128', 'D64', 'D32', 'D16', 'D4', 'D1']],
+    [
+      3014645,
+      22,
+      [
+        'D2097152',
+        'D524288',
+        'D262144',
+        'D65536',
+        'D32768',
+        'D16384',
+        'D8192',
+        'D4096',
+        'D2048',
+        'D1024',
+        'D512',
+        'D256',
+        'D128',
+        'D64',
+        'D32',
+        'D16',
+        'D4',
+        'D1',
+      ],
+    ],
   ])('decomposes %d at %d levels into %j', (amount, levels, keys) => {
     expect(decompose(amount, levels)).toStrictEqual(keys);
   });

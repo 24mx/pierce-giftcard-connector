@@ -41,6 +41,40 @@ const notFound = () =>
     { status: 404 },
   );
 
+/** The cart Type as the API answers it once both fields are already in place. */
+const convergedType = () => ({
+  id: 'type-id',
+  version: 4,
+  key: OPTS.typeKey,
+  fieldDefinitions: [
+    { name: 'loyaltyRedemptionId', type: { name: 'String' } },
+    { name: 'loyaltyRedemption', type: { name: 'Set', elementType: { name: 'String' } } },
+  ],
+});
+
+/** A fully converged `lu` discount as the API answers it — spread it and drift the fields under test. */
+const convergedDiscount = (key: string) => {
+  const denomination = key.replace('loyalty-lu-', '');
+  const index = denominationKeys(18).indexOf(denomination);
+  const cents = Number(denomination.replace('D', ''));
+  return {
+    id: `id-${key}`,
+    version: 2,
+    key,
+    isActive: true,
+    sortOrder: `0.00000101${String(index + 1).padStart(2, '0')}1`,
+    cartPredicate: `custom.loyaltyRedemption contains "${denomination}"`,
+    target: { type: 'totalPrice' },
+    stackingMode: 'Stacking',
+    requiresDiscountCode: false,
+    stores: [{ typeId: 'store', key: 'lu' }],
+    value: {
+      type: 'absolute',
+      money: [{ type: 'centPrecision', currencyCode: 'EUR', centAmount: cents, fractionDigits: 2 }],
+    },
+  };
+};
+
 describe('loyalty-provisioning', () => {
   const server = setupServer(
     http.post(`${AUTH}/oauth/token`, () =>
@@ -159,6 +193,66 @@ describe('loyalty-provisioning', () => {
         { action: 'changeValue', value: { type: 'absolute', money: [{ currencyCode: 'EUR', centAmount: 1 }] } },
       ],
     });
+  });
+
+  test('re-scopes an existing discount that carries the wrong stores', async () => {
+    const updates: { url: string; body: Record<string, unknown> }[] = [];
+    const singleStoreOpts = { ...OPTS, stores: [{ storeKey: 'lu', currency: 'EUR', levels: 18 }] };
+    server.use(
+      http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () => HttpResponse.json(convergedType())),
+      // A leftover from the pre-per-Store model: right key, right everything else, but no store scope.
+      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) =>
+        HttpResponse.json({ ...convergedDiscount(String(params.key)), stores: [] }),
+      ),
+      http.post(`${API}/${PROJECT}/cart-discounts/key=:key`, async ({ request, params }) => {
+        updates.push({ url: `cart-discounts/${params.key}`, body: (await request.json()) as Record<string, unknown> });
+        return HttpResponse.json({ id: `id-${params.key}`, version: 3 });
+      }),
+    );
+
+    await provisionLoyaltyRedemption(client(), singleStoreOpts, silent);
+
+    expect(updates).toHaveLength(18);
+    expect(updates[0].body).toMatchObject({
+      version: 2,
+      actions: [{ action: 'setStores', stores: [{ typeId: 'store', key: 'lu' }] }],
+    });
+  });
+
+  test('converges predicate, target, stacking, code requirement and sortOrder on an existing discount', async () => {
+    const updates: { url: string; body: Record<string, unknown> }[] = [];
+    const singleStoreOpts = { ...OPTS, stores: [{ storeKey: 'lu', currency: 'EUR', levels: 18 }] };
+    server.use(
+      http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () => HttpResponse.json(convergedType())),
+      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) =>
+        HttpResponse.json({
+          ...convergedDiscount(String(params.key)),
+          // Every field below drifted - including sortOrder, which is where the live project-wide
+          // uniqueness bug bit: a discount stuck on a stale sortOrder must be pulled back in line.
+          cartPredicate: 'custom.loyaltyRedemption contains "nonsense"',
+          target: { type: 'lineItems', predicate: '1=1' },
+          stackingMode: 'StopAfterThisDiscount',
+          requiresDiscountCode: true,
+          sortOrder: '0.5',
+        }),
+      ),
+      http.post(`${API}/${PROJECT}/cart-discounts/key=:key`, async ({ request, params }) => {
+        updates.push({ url: `cart-discounts/${params.key}`, body: (await request.json()) as Record<string, unknown> });
+        return HttpResponse.json({ id: `id-${params.key}`, version: 3 });
+      }),
+    );
+
+    await provisionLoyaltyRedemption(client(), singleStoreOpts, silent);
+
+    expect(updates).toHaveLength(18);
+    const actions = updates[0].body.actions as { action: string }[];
+    expect(actions).toStrictEqual([
+      { action: 'changeCartPredicate', cartPredicate: 'custom.loyaltyRedemption contains "D1"' },
+      { action: 'changeTarget', target: { type: 'totalPrice' } },
+      { action: 'changeStackingMode', stackingMode: 'Stacking' },
+      { action: 'changeRequiresDiscountCode', requiresDiscountCode: false },
+      { action: 'changeSortOrder', sortOrder: '0.00000101011' },
+    ]);
   });
 
   test('fails loudly when an existing type defines a field with the wrong type', async () => {

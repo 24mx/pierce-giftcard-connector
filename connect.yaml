@@ -57,13 +57,13 @@ deployAs:
           required: false
           default: loyaltyRedemption
         - key: LOYALTY_DISCOUNT_KEY_PREFIX
-          description: Key prefix of the 18 denomination CartDiscounts; the loyalty backend must use the same prefix
+          description: Key prefix of the per-Store denomination CartDiscounts; the loyalty backend must use the same prefix
           required: false
           default: loyalty-
-        - key: LOYALTY_DISCOUNT_CURRENCIES
-          description: Comma-separated currencies the 18 denomination CartDiscounts carry a Money entry for
+        - key: LOYALTY_DISCOUNT_STORES
+          description: Comma-separated "storeKey:currency:levels" triples, one per commercetools Store that should get its own scoped set of denomination CartDiscounts (e.g. lu:EUR:18,ro:RON:21,se:SEK:22)
           required: false
-          default: EUR
+          default: lu:EUR:18,ro:RON:21,se:SEK:22
         - key: LOYALTY_DISCOUNT_SORT_ORDER_BASE
           description: Prefix of the denomination discounts' sortOrder (index appended); keep below every marketing promotion
           required: false

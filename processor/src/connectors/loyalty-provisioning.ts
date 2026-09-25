@@ -188,6 +188,13 @@ async function ensureDenominationDiscount(
   if (existing.sortOrder !== sortOrder) {
     actions.push({ action: 'changeSortOrder', sortOrder });
   }
+  // A discount found by key but scoped to the wrong Store - or to no Store at all, which is what a
+  // leftover from the pre-per-Store model looks like - would otherwise be reported as converged and
+  // stay wrong forever, eating the project-wide automatic-discount budget and never firing for its
+  // store's carts.
+  if (!sameStores(existing, draft)) {
+    actions.push({ action: 'setStores', stores: draft.stores ?? [] });
+  }
   if (actions.length === 0) {
     return;
   }
@@ -204,6 +211,13 @@ const describeFieldType = (definition: FieldDefinition): string =>
 
 const sameFieldType = (a: FieldDefinition, b: FieldDefinition): boolean =>
   describeFieldType(a) === describeFieldType(b);
+
+const sameStores = (existing: CartDiscount, wanted: CartDiscountDraft): boolean => {
+  // The API answers with key references; the draft may carry either a key or an id.
+  const have = (existing.stores ?? []).map((s) => s.key).sort();
+  const want = (wanted.stores ?? []).map((s) => s.key ?? s.id ?? '').sort();
+  return have.length === want.length && have.every((entry, i) => entry === want[i]);
+};
 
 const sameMoney = (existing: CartDiscount, wanted: CartDiscountValueAbsoluteDraft): boolean => {
   if (existing.value.type !== 'absolute') {

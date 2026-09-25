@@ -14,6 +14,9 @@ describeSystem('an abandoned checkout', () => {
   const backend = loyalty(env);
   const routes = processor(env);
 
+  // Every denomination discount is scoped to a Store, so a storeless cart never gets one to apply.
+  const store = env.loyaltyStores[0];
+
   let email: string;
   let cart: Cart | undefined;
   let sessionId: string;
@@ -21,7 +24,12 @@ describeSystem('an abandoned checkout', () => {
   beforeEach(async () => {
     email = testEmail();
     await backend.grant(email, 10_000);
-    cart = await ct.createCart({ email });
+    cart = await ct.createCart({
+      email,
+      storeKey: store.storeKey,
+      currency: store.currency,
+      country: store.country,
+    });
     sessionId = await ct.createSession(cart!.id);
   });
 
@@ -43,7 +51,7 @@ describeSystem('an abandoned checkout', () => {
     const balanceBefore = (await backend.balance(email)).points;
     const redeemed = await routes.post<RedeemResponse>('/redeem', sessionId, {
       code: 'points',
-      redeemAmount: { centAmount: 700, currencyCode: env.currency },
+      redeemAmount: { centAmount: 700, currencyCode: store.currency },
     });
     expect(redeemed.status).toBe(200);
 
