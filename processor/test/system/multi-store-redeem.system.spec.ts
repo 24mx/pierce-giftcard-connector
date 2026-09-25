@@ -39,9 +39,13 @@ describeSystem('redeeming in a specific store and currency', () => {
 
       const balance = await routes.post('/balance', sessionId, { code: '' });
       expect(balance.status).toBe(200);
-      const points = Math.min(100, (balance.body as { points: number }).points);
-      expect(points).toBeGreaterThan(0);
-      const redeemAmount = Math.round((points / 100) * (balance.body as { amount: { centAmount: number } }).amount.centAmount);
+      const body = balance.body as { points: number; maxPoints: number; amount: { centAmount: number } };
+      // centsPerPoint is the account-level conversion rate; maxPoints is the CART-aware cap (never more than
+      // this cart can actually absorb), already floored to a multiple of 100 by the backend.
+      const centsPerPoint = body.amount.centAmount / body.points;
+      const pointsToRedeem = Math.min(100, body.maxPoints);
+      expect(pointsToRedeem).toBeGreaterThan(0);
+      const redeemAmount = Math.round(pointsToRedeem * centsPerPoint);
 
       const redeemed = await routes.post('/redeem', sessionId, {
         code: 'points',
