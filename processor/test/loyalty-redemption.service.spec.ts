@@ -90,6 +90,7 @@ const setupConfig = (extra: Record<string, unknown> = {}) =>
     loyaltyApiKey: '',
     healthCheckTimeout: 5000,
     projectKey: 'p',
+    loyaltyDiscountLevelsByCurrency: { EUR: 18 },
     ...extra,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any);
@@ -431,6 +432,56 @@ describe('loyalty-redemption.service', () => {
       );
 
       await expect(redeem(300000)).rejects.toMatchObject({ code: 'AmountNotDecomposable', httpErrorStatus: 400 });
+      expect(held).toBe(0);
+    });
+
+    test('decomposes against the levels configured for the cart currency, not a fixed 18', async () => {
+      setupConfig({ loyaltyDiscountLevelsByCurrency: { EUR: 18, RON: 21 } });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        totalPrice: { type: 'centPrecision', currencyCode: 'RON', centAmount: 2000000, fractionDigits: 2 },
+      });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultCartService.prototype, 'getPaymentAmount').mockResolvedValue({
+        centAmount: 2000000,
+        currencyCode: 'RON',
+        fractionDigits: 2,
+      });
+      let holdBody: Record<string, unknown> = {};
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
+          holdBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ redemptionId: holdBody.redemptionId, points: 300000, balance: 0 });
+        }),
+      );
+      // 300000 minor units exceeds 18 levels' reach (262143) but not 21's (2097151).
+      cartFields.nextTotalAfterWrite = 2000000 - 300000;
+
+      const result = await service.redeem({
+        data: { code: '', redeemAmount: { centAmount: 300000, currencyCode: 'RON' } },
+      });
+
+      expect(result.appliedAmount).toStrictEqual({ centAmount: 300000, currencyCode: 'RON' });
+      expect(cartFields.writes[0].denominations).toContain('D262144');
+    });
+
+    test('refuses a currency with no configured denominations before touching the ledger', async () => {
+      setupConfig({ loyaltyDiscountLevelsByCurrency: { EUR: 18 } });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(
+        getCartWithCustomerEmail('demo@example.com', {
+          totalPrice: { type: 'centPrecision', currencyCode: 'PLN', centAmount: 100000, fractionDigits: 2 },
+        }),
+      );
+      let held = 0;
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
+          held++;
+          return HttpResponse.json({});
+        }),
+      );
+
+      await expect(
+        service.redeem({ data: { code: '', redeemAmount: { centAmount: 100, currencyCode: 'PLN' } } }),
+      ).rejects.toMatchObject({ code: 'CurrencyNotMatch', httpErrorStatus: 400 });
       expect(held).toBe(0);
     });
 
