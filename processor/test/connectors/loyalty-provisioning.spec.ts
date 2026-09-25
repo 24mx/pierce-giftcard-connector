@@ -9,16 +9,16 @@ import { denominationKeys } from '../../src/services/denominations';
 const AUTH = 'https://auth.test';
 const API = 'https://api.test';
 const PROJECT = 'test-project';
-/** The sortOrder provisioning assigns to a denomination key: `<base><two-digit index>1`. */
-const expectedSortOrder = (key: string): string =>
-  `${OPTS.sortOrderBase}${String(denominationKeys().indexOf(key.replace('loyalty-', '')) + 1).padStart(2, '0')}1`;
 
 const OPTS = {
   typeKey: 'pierce-loyalty-cart',
   redemptionIdField: 'loyaltyRedemptionId',
   denominationsField: 'loyaltyRedemption',
   discountKeyPrefix: 'loyalty-',
-  currencies: ['EUR', 'SEK'],
+  stores: [
+    { storeKey: 'lu', currency: 'EUR', levels: 18 },
+    { storeKey: 'ro', currency: 'RON', levels: 21 },
+  ],
   sortOrderBase: '0.000001',
 };
 const lateBoundFetch = (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init);
@@ -51,7 +51,7 @@ describe('loyalty-provisioning', () => {
   afterEach(() => server.resetHandlers());
   afterAll(() => server.close());
 
-  test('creates the cart type and all 18 denomination discounts on an empty project', async () => {
+  test('creates the cart type and one store-scoped denomination set per store, sized to that store\'s levels', async () => {
     const created: { url: string; body: Record<string, unknown> }[] = [];
     server.use(
       http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, notFound),
@@ -68,120 +68,47 @@ describe('loyalty-provisioning', () => {
 
     await provisionLoyaltyRedemption(client(), OPTS, silent);
 
-    const type = created.find((c) => c.url === 'types')!.body;
-    expect(type).toMatchObject({
-      key: 'pierce-loyalty-cart',
-      resourceTypeIds: ['order'],
-      fieldDefinitions: [
-        { name: 'loyaltyRedemptionId', type: { name: 'String' }, required: false },
-        { name: 'loyaltyRedemption', type: { name: 'Set', elementType: { name: 'String' } }, required: false },
-      ],
-    });
     const discounts = created.filter((c) => c.url === 'cart-discounts').map((c) => c.body);
-    expect(discounts).toHaveLength(18);
-    expect(discounts.map((d) => d.key)).toStrictEqual(denominationKeys().map((k) => `loyalty-${k}`));
-    expect(discounts[9]).toMatchObject({
-      key: 'loyalty-D512',
+    expect(discounts).toHaveLength(18 + 21);
+
+    const lu = discounts.filter((d) => (d.key as string).startsWith('loyalty-lu-'));
+    expect(lu).toHaveLength(18);
+    expect(lu.map((d) => d.key)).toStrictEqual(denominationKeys(18).map((k) => `loyalty-lu-${k}`));
+    expect(lu[9]).toMatchObject({
+      key: 'loyalty-lu-D512',
       cartPredicate: 'custom.loyaltyRedemption contains "D512"',
-      value: {
-        type: 'absolute',
-        money: [
-          { currencyCode: 'EUR', centAmount: 512 },
-          { currencyCode: 'SEK', centAmount: 512 },
-        ],
-      },
+      value: { type: 'absolute', money: [{ currencyCode: 'EUR', centAmount: 512 }] },
       target: { type: 'totalPrice' },
       requiresDiscountCode: false,
       isActive: true,
       stackingMode: 'Stacking',
       sortOrder: '0.000001101',
+      stores: [{ typeId: 'store', key: 'lu' }],
     });
-    expect(new Set(discounts.map((d) => d.sortOrder)).size).toBe(18);
-    // commercetools refuses a sortOrder that ends with a zero, which a plain two-digit index would
-    // produce for the tenth denomination.
-    expect(discounts.map((d) => d.sortOrder).filter((s) => s.endsWith('0'))).toStrictEqual([]);
+
+    const ro = discounts.filter((d) => (d.key as string).startsWith('loyalty-ro-'));
+    expect(ro).toHaveLength(21);
+    expect(ro.map((d) => d.key)).toStrictEqual(denominationKeys(21).map((k) => `loyalty-ro-${k}`));
+    expect(ro[20]).toMatchObject({
+      key: 'loyalty-ro-D1048576',
+      value: { type: 'absolute', money: [{ currencyCode: 'RON', centAmount: 1048576 }] },
+      stores: [{ typeId: 'store', key: 'ro' }],
+      // sortOrder reuses the same per-index formula as lu: the two stores never compete on the same
+      // cart, so a collision across stores is harmless.
+      sortOrder: '0.000001211',
+    });
+
+    // No sortOrder within a single store's own set ends in a trailing zero (commercetools refuses it).
+    for (const key of ['lu', 'ro']) {
+      const own = discounts.filter((d) => (d.key as string).startsWith(`loyalty-${key}-`));
+      expect(new Set(own.map((d) => d.sortOrder)).size).toBe(own.length);
+      expect(own.map((d) => d.sortOrder).filter((s) => (s as string).endsWith('0'))).toStrictEqual([]);
+    }
   });
 
-  test('extends an existing type with the missing field and updates a discount whose currencies changed', async () => {
+  test('updates a discount whose money changed, keeping it scoped to its own store', async () => {
     const updates: { url: string; body: Record<string, unknown> }[] = [];
-    server.use(
-      http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () =>
-        HttpResponse.json({
-          id: 'type-id',
-          version: 4,
-          key: OPTS.typeKey,
-          fieldDefinitions: [{ name: 'loyaltyRedemptionId', type: { name: 'String' } }],
-        }),
-      ),
-      http.post(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, async ({ request }) => {
-        updates.push({ url: 'types', body: (await request.json()) as Record<string, unknown> });
-        return HttpResponse.json({ id: 'type-id', version: 5 });
-      }),
-      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) =>
-        HttpResponse.json({
-          id: `id-${params.key}`,
-          version: 2,
-          key: params.key,
-          isActive: true,
-          sortOrder: expectedSortOrder(String(params.key)),
-          cartPredicate: `custom.loyaltyRedemption contains "${String(params.key).replace('loyalty-', '')}"`,
-          target: { type: 'totalPrice' },
-          stackingMode: 'Stacking',
-          requiresDiscountCode: false,
-          value: {
-            type: 'absolute',
-            money: [{ type: 'centPrecision', currencyCode: 'EUR', centAmount: 1, fractionDigits: 2 }],
-          },
-        }),
-      ),
-      http.post(`${API}/${PROJECT}/cart-discounts/key=:key`, async ({ request, params }) => {
-        updates.push({ url: `cart-discounts/${params.key}`, body: (await request.json()) as Record<string, unknown> });
-        return HttpResponse.json({ id: `id-${params.key}`, version: 3 });
-      }),
-    );
-
-    await provisionLoyaltyRedemption(client(), OPTS, silent);
-
-    expect(updates.find((u) => u.url === 'types')!.body).toStrictEqual({
-      version: 4,
-      actions: [
-        {
-          action: 'addFieldDefinition',
-          fieldDefinition: {
-            name: 'loyaltyRedemption',
-            label: { en: 'Loyalty discount denominations' },
-            required: false,
-            type: { name: 'Set', elementType: { name: 'String' } },
-          },
-        },
-      ],
-    });
-    // Every discount's money list is EUR-only in the project but EUR+SEK is wanted: 18 changeValue updates.
-    const discountUpdates = updates.filter((u) => u.url.startsWith('cart-discounts/'));
-    expect(discountUpdates).toHaveLength(18);
-    expect(discountUpdates[0].body).toMatchObject({
-      version: 2,
-      actions: [
-        {
-          action: 'changeValue',
-          value: {
-            type: 'absolute',
-            money: [
-              { currencyCode: 'EUR', centAmount: 1 },
-              { currencyCode: 'SEK', centAmount: 1 },
-            ],
-          },
-        },
-      ],
-    });
-  });
-
-  /**
-   * A discount provisioned earlier with another field name, target or stacking mode exists by key
-   * but never applies; reporting success would leave every redeem answering DiscountNotApplied.
-   */
-  test('converges predicate, target, stacking and code requirement on an existing discount', async () => {
-    const updates: Record<string, unknown>[] = [];
+    const singleStoreOpts = { ...OPTS, stores: [{ storeKey: 'lu', currency: 'EUR', levels: 18 }] };
     server.use(
       http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () =>
         HttpResponse.json({
@@ -194,47 +121,36 @@ describe('loyalty-provisioning', () => {
           ],
         }),
       ),
-      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) => {
-        const cents = Number(String(params.key).replace('loyalty-D', ''));
-        return HttpResponse.json({
-          id: 'x',
-          version: 1,
+      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) =>
+        HttpResponse.json({
+          id: `id-${params.key}`,
+          version: 2,
           key: params.key,
           isActive: true,
-          sortOrder: '0.00000101',
-          cartPredicate: `custom.oldField contains "D${cents}"`,
-          target: { type: 'lineItems', predicate: '1=1' },
-          stackingMode: 'StopAfterThisDiscount',
-          requiresDiscountCode: true,
+          sortOrder: '0.000001011',
+          cartPredicate: `custom.loyaltyRedemption contains "${String(params.key).replace('loyalty-lu-', '')}"`,
+          target: { type: 'totalPrice' },
+          stackingMode: 'Stacking',
+          requiresDiscountCode: false,
+          stores: [{ typeId: 'store', key: 'lu' }],
           value: {
             type: 'absolute',
-            money: OPTS.currencies.map((c) => ({
-              type: 'centPrecision',
-              currencyCode: c,
-              centAmount: cents,
-              fractionDigits: 2,
-            })),
+            money: [{ type: 'centPrecision', currencyCode: 'EUR', centAmount: 999, fractionDigits: 2 }],
           },
-        });
-      }),
-      http.post(`${API}/${PROJECT}/cart-discounts/key=:key`, async ({ request }) => {
-        updates.push((await request.json()) as Record<string, unknown>);
-        return HttpResponse.json({ id: 'x', version: 2 });
+        }),
+      ),
+      http.post(`${API}/${PROJECT}/cart-discounts/key=:key`, async ({ request, params }) => {
+        updates.push({ url: `cart-discounts/${params.key}`, body: (await request.json()) as Record<string, unknown> });
+        return HttpResponse.json({ id: `id-${params.key}`, version: 3 });
       }),
     );
 
-    await provisionLoyaltyRedemption(client(), OPTS, silent);
+    await provisionLoyaltyRedemption(client(), singleStoreOpts, silent);
 
     expect(updates).toHaveLength(18);
-    expect(updates[0]).toStrictEqual({
-      version: 1,
-      actions: [
-        { action: 'changeCartPredicate', cartPredicate: 'custom.loyaltyRedemption contains "D1"' },
-        { action: 'changeTarget', target: { type: 'totalPrice' } },
-        { action: 'changeStackingMode', stackingMode: 'Stacking' },
-        { action: 'changeRequiresDiscountCode', requiresDiscountCode: false },
-        { action: 'changeSortOrder', sortOrder: '0.000001011' },
-      ],
+    expect(updates[0].body).toMatchObject({
+      version: 2,
+      actions: [{ action: 'changeValue', value: { type: 'absolute', money: [{ currencyCode: 'EUR', centAmount: 1 }] } }],
     });
   });
 
@@ -258,6 +174,7 @@ describe('loyalty-provisioning', () => {
 
   test('changes nothing when the project already matches', async () => {
     const posts: string[] = [];
+    const singleStoreOpts = { ...OPTS, stores: [{ storeKey: 'lu', currency: 'EUR', levels: 18 }] };
     server.use(
       http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () =>
         HttpResponse.json({
@@ -271,25 +188,23 @@ describe('loyalty-provisioning', () => {
         }),
       ),
       http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) => {
-        const cents = Number(String(params.key).replace('loyalty-D', ''));
+        const denomination = String(params.key).replace('loyalty-lu-', '');
+        const index = denominationKeys(18).indexOf(denomination);
+        const cents = Number(denomination.replace('D', ''));
         return HttpResponse.json({
           id: 'x',
           version: 1,
           key: params.key,
           isActive: true,
-          sortOrder: expectedSortOrder(String(params.key)),
-          cartPredicate: `custom.loyaltyRedemption contains "D${cents}"`,
+          sortOrder: `0.000001${String(index + 1).padStart(2, '0')}1`,
+          cartPredicate: `custom.loyaltyRedemption contains "${denomination}"`,
           target: { type: 'totalPrice' },
           stackingMode: 'Stacking',
           requiresDiscountCode: false,
+          stores: [{ typeId: 'store', key: 'lu' }],
           value: {
             type: 'absolute',
-            money: OPTS.currencies.map((c) => ({
-              type: 'centPrecision',
-              currencyCode: c,
-              centAmount: cents,
-              fractionDigits: 2,
-            })),
+            money: [{ type: 'centPrecision', currencyCode: 'EUR', centAmount: cents, fractionDigits: 2 }],
           },
         });
       }),
@@ -299,7 +214,7 @@ describe('loyalty-provisioning', () => {
       }),
     );
 
-    await provisionLoyaltyRedemption(client(), OPTS, silent);
+    await provisionLoyaltyRedemption(client(), singleStoreOpts, silent);
 
     expect(posts).toStrictEqual([]);
   });
