@@ -17,6 +17,7 @@ export type SystemEnv = {
   currency: string;
   storefrontCartTypeKey: string;
   checkoutApplicationKey: string | undefined;
+  loyaltyStores: { storeKey: string; currency: string; country: string }[];
 };
 
 const stripSlash = (url: string) => url.replace(/\/+$/, '');
@@ -54,6 +55,14 @@ export const systemEnv = (): SystemEnv | null => {
     storefrontCartTypeKey:
       process.env.SYSTEM_STOREFRONT_CART_TYPE_KEY || process.env.LOYALTY_CART_TYPE_KEY || 'pierce-loyalty-cart',
     checkoutApplicationKey: process.env.SYSTEM_CHECKOUT_APPLICATION_KEY,
+    loyaltyStores: (process.env.SYSTEM_LOYALTY_STORES || 'lu:EUR:LU,ro:RON:RO,se:SEK:SE')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+      .map((entry) => {
+        const [storeKey, currency, country] = entry.split(':');
+        return { storeKey, currency, country };
+      }),
   };
 };
 
