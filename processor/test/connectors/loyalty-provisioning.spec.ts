@@ -82,7 +82,7 @@ describe('loyalty-provisioning', () => {
       requiresDiscountCode: false,
       isActive: true,
       stackingMode: 'Stacking',
-      sortOrder: '0.000001101',
+      sortOrder: '0.00000101101',
       stores: [{ typeId: 'store', key: 'lu' }],
     });
 
@@ -93,9 +93,9 @@ describe('loyalty-provisioning', () => {
       key: 'loyalty-ro-D1048576',
       value: { type: 'absolute', money: [{ currencyCode: 'RON', centAmount: 1048576 }] },
       stores: [{ typeId: 'store', key: 'ro' }],
-      // sortOrder reuses the same per-index formula as lu: the two stores never compete on the same
-      // cart, so a collision across stores is harmless.
-      sortOrder: '0.000001211',
+      // sortOrder incorporates the store index to ensure uniqueness project-wide:
+      // storeIndex=1 (ro), index=20 → 0.000001 + 02 + 21 + 1 = 0.00000102211
+      sortOrder: '0.00000102211',
     });
 
     // No sortOrder within a single store's own set ends in a trailing zero (commercetools refuses it).
@@ -104,6 +104,9 @@ describe('loyalty-provisioning', () => {
       expect(new Set(own.map((d) => d.sortOrder)).size).toBe(own.length);
       expect(own.map((d) => d.sortOrder).filter((s) => (s as string).endsWith('0'))).toStrictEqual([]);
     }
+
+    // sortOrder must be unique across ALL stores (commercetools enforces project-wide uniqueness).
+    expect(new Set(discounts.map((d) => d.sortOrder)).size).toBe(discounts.length);
   });
 
   test('updates a discount whose money changed, keeping it scoped to its own store', async () => {
@@ -121,14 +124,17 @@ describe('loyalty-provisioning', () => {
           ],
         }),
       ),
-      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) =>
-        HttpResponse.json({
+      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) => {
+        const denomination = String(params.key).replace('loyalty-lu-', '');
+        const index = denominationKeys(18).indexOf(denomination);
+        const sortOrder = `0.000001${String(index + 1).padStart(2, '0')}1`;
+        return HttpResponse.json({
           id: `id-${params.key}`,
           version: 2,
           key: params.key,
           isActive: true,
-          sortOrder: '0.000001011',
-          cartPredicate: `custom.loyaltyRedemption contains "${String(params.key).replace('loyalty-lu-', '')}"`,
+          sortOrder: `0.00000101${String(index + 1).padStart(2, '0')}1`,
+          cartPredicate: `custom.loyaltyRedemption contains "${denomination}"`,
           target: { type: 'totalPrice' },
           stackingMode: 'Stacking',
           requiresDiscountCode: false,
@@ -137,8 +143,8 @@ describe('loyalty-provisioning', () => {
             type: 'absolute',
             money: [{ type: 'centPrecision', currencyCode: 'EUR', centAmount: 999, fractionDigits: 2 }],
           },
-        }),
-      ),
+        });
+      }),
       http.post(`${API}/${PROJECT}/cart-discounts/key=:key`, async ({ request, params }) => {
         updates.push({ url: `cart-discounts/${params.key}`, body: (await request.json()) as Record<string, unknown> });
         return HttpResponse.json({ id: `id-${params.key}`, version: 3 });
@@ -196,7 +202,7 @@ describe('loyalty-provisioning', () => {
           version: 1,
           key: params.key,
           isActive: true,
-          sortOrder: `0.000001${String(index + 1).padStart(2, '0')}1`,
+          sortOrder: `0.00000101${String(index + 1).padStart(2, '0')}1`,
           cartPredicate: `custom.loyaltyRedemption contains "${denomination}"`,
           target: { type: 'totalPrice' },
           stackingMode: 'Stacking',

@@ -39,11 +39,11 @@ type Logger = { info(message: string): void };
  * discount has its value, predicate, target, stacking mode and code requirement brought back in line.
  * Discounts are never deleted here - orders reference them.
  *
- * sortOrder: every CartDiscount needs a distinct value in (0, 1) among discounts that could apply to
- * the same cart, higher applies first, and commercetools refuses a value ending in zero. Each store's
- * own denominations sit at `<base><two-digit index>1` (the trailing 1 keeps the tenth entry legal);
- * the same index range is reused across stores because two different stores' discounts never compete
- * on the same cart.
+ * sortOrder: commercetools enforces sortOrder uniqueness project-wide, not per-Store-scope. Every
+ * CartDiscount needs a distinct value in (0, 1), and commercetools refuses a value ending in zero.
+ * To guarantee uniqueness across all stores' discounts, the formula incorporates the store's position
+ * in opts.stores: `<base><store-index><denomination-index>1` — e.g., store 0's 10th denomination
+ * becomes `0.00000101101`, store 1's 10th denomination becomes `0.00000102101`.
  */
 export async function provisionLoyaltyRedemption(
   client: ByProjectKeyRequestBuilder,
@@ -51,10 +51,11 @@ export async function provisionLoyaltyRedemption(
   logger: Logger,
 ): Promise<void> {
   await ensureCartType(client, opts, logger);
-  for (const store of opts.stores) {
+  for (let storeIndex = 0; storeIndex < opts.stores.length; storeIndex++) {
+    const store = opts.stores[storeIndex];
     const keys = denominationKeys(store.levels);
     for (let index = 0; index < keys.length; index++) {
-      await ensureDenominationDiscount(client, opts, store, keys[index], index, logger);
+      await ensureDenominationDiscount(client, opts, store, keys[index], storeIndex, index, logger);
     }
   }
 }
@@ -136,6 +137,7 @@ async function ensureDenominationDiscount(
   opts: ProvisioningOptions,
   store: ProvisioningStore,
   denomination: string,
+  storeIndex: number,
   index: number,
   logger: Logger,
 ): Promise<void> {
@@ -145,7 +147,7 @@ async function ensureDenominationDiscount(
     type: 'absolute',
     money: [{ currencyCode: store.currency, centAmount: cents }],
   };
-  const sortOrder = `${opts.sortOrderBase}${String(index + 1).padStart(2, '0')}1`;
+  const sortOrder = `${opts.sortOrderBase}${String(storeIndex + 1).padStart(2, '0')}${String(index + 1).padStart(2, '0')}1`;
   const draft: CartDiscountDraft = {
     key,
     name: { en: `Loyalty points ${store.storeKey} ${denomination}` },
