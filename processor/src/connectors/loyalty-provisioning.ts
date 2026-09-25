@@ -10,12 +10,18 @@ import {
 import { ByProjectKeyRequestBuilder } from '@commercetools/platform-sdk/dist/declarations/src/generated/client/by-project-key-request-builder';
 import { denominationKeys, denominationMinorUnits } from '../services/denominations';
 
+export type ProvisioningStore = {
+  storeKey: string;
+  currency: string;
+  levels: number;
+};
+
 export type ProvisioningOptions = {
   typeKey: string;
   redemptionIdField: string;
   denominationsField: string;
   discountKeyPrefix: string;
-  currencies: string[];
+  stores: ProvisioningStore[];
   sortOrderBase: string;
 };
 
@@ -23,17 +29,21 @@ type Logger = { info(message: string): void };
 
 /**
  * Idempotent set-up of everything the redemption needs in commercetools: the cart Type with the two
- * fields, and one absolute automatic CartDiscount per denomination, gated by
- * `custom.<denominationsField> contains "Dn"`. Re-running converges: missing fields are added to an
- * existing type (a field of the wrong type fails the run), and an existing discount has its value,
- * predicate, target, stacking mode and code requirement brought back in line. Discounts are never
- * deleted here - orders reference them.
+ * fields, and one absolute automatic CartDiscount per denomination PER STORE, gated by
+ * `custom.<denominationsField> contains "Dn"` and scoped to that store via `stores`. Store-scoping
+ * keeps every store's set inside its OWN 100-active-automatic-discount budget instead of the
+ * project-wide one, which a live check against pierce-prod found already at 90/100 from unrelated
+ * marketing discounts. Each store gets exactly as many levels as its own currency needs to reach the
+ * same real EUR-equivalent ceiling as every other store (see config.ts). Re-running converges: missing
+ * fields are added to an existing type (a field of the wrong type fails the run), and an existing
+ * discount has its value, predicate, target, stacking mode and code requirement brought back in line.
+ * Discounts are never deleted here - orders reference them.
  *
- * sortOrder: every CartDiscount in a project needs a distinct value in (0, 1), higher means applied
- * first, and commercetools refuses a value that ends with a zero. The denominations sit at
- * `<base><two-digit index>1` (0.000001011 … 0.000001181): the trailing 1 keeps the tenth entry
- * legal, and the whole block stays far below any marketing promotion, so percentages come off the
- * full price and points off the promoted price.
+ * sortOrder: commercetools enforces sortOrder uniqueness project-wide, not per-Store-scope. Every
+ * CartDiscount needs a distinct value in (0, 1), and commercetools refuses a value ending in zero.
+ * To guarantee uniqueness across all stores' discounts, the formula incorporates the store's position
+ * in opts.stores: `<base><store-index><denomination-index>1` — e.g., store 0's 10th denomination
+ * becomes `0.00000101101`, store 1's 10th denomination becomes `0.00000102101`.
  */
 export async function provisionLoyaltyRedemption(
   client: ByProjectKeyRequestBuilder,
@@ -41,9 +51,12 @@ export async function provisionLoyaltyRedemption(
   logger: Logger,
 ): Promise<void> {
   await ensureCartType(client, opts, logger);
-  const keys = denominationKeys();
-  for (let index = 0; index < keys.length; index++) {
-    await ensureDenominationDiscount(client, opts, keys[index], index, logger);
+  for (let storeIndex = 0; storeIndex < opts.stores.length; storeIndex++) {
+    const store = opts.stores[storeIndex];
+    const keys = denominationKeys(store.levels);
+    for (let index = 0; index < keys.length; index++) {
+      await ensureDenominationDiscount(client, opts, store, keys[index], storeIndex, index, logger);
+    }
   }
 }
 
@@ -122,20 +135,22 @@ async function ensureCartType(
 async function ensureDenominationDiscount(
   client: ByProjectKeyRequestBuilder,
   opts: ProvisioningOptions,
+  store: ProvisioningStore,
   denomination: string,
+  storeIndex: number,
   index: number,
   logger: Logger,
 ): Promise<void> {
-  const key = `${opts.discountKeyPrefix}${denomination}`;
+  const key = `${opts.discountKeyPrefix}${store.storeKey}-${denomination}`;
   const cents = denominationMinorUnits(denomination);
   const value: CartDiscountValueAbsoluteDraft = {
     type: 'absolute',
-    money: opts.currencies.map((currencyCode) => ({ currencyCode, centAmount: cents })),
+    money: [{ currencyCode: store.currency, centAmount: cents }],
   };
-  const sortOrder = `${opts.sortOrderBase}${String(index + 1).padStart(2, '0')}1`;
+  const sortOrder = `${opts.sortOrderBase}${String(storeIndex + 1).padStart(2, '0')}${String(index + 1).padStart(2, '0')}1`;
   const draft: CartDiscountDraft = {
     key,
-    name: { en: `Loyalty points ${denomination}` },
+    name: { en: `Loyalty points ${store.storeKey} ${denomination}` },
     value,
     cartPredicate: `custom.${opts.denominationsField} contains "${denomination}"`,
     target: { type: 'totalPrice' },
@@ -143,6 +158,7 @@ async function ensureDenominationDiscount(
     isActive: true,
     requiresDiscountCode: false,
     stackingMode: 'Stacking',
+    stores: [{ typeId: 'store', key: store.storeKey }],
   };
   const existing = await getOr404<CartDiscount>(() => client.cartDiscounts().withKey({ key }).get().execute());
   if (!existing) {
@@ -172,6 +188,13 @@ async function ensureDenominationDiscount(
   if (existing.sortOrder !== sortOrder) {
     actions.push({ action: 'changeSortOrder', sortOrder });
   }
+  // A discount found by key but scoped to the wrong Store - or to no Store at all, which is what a
+  // leftover from the pre-per-Store model looks like - would otherwise be reported as converged and
+  // stay wrong forever, eating the project-wide automatic-discount budget and never firing for its
+  // store's carts.
+  if (!sameStores(existing, draft)) {
+    actions.push({ action: 'setStores', stores: draft.stores ?? [] });
+  }
   if (actions.length === 0) {
     return;
   }
@@ -188,6 +211,13 @@ const describeFieldType = (definition: FieldDefinition): string =>
 
 const sameFieldType = (a: FieldDefinition, b: FieldDefinition): boolean =>
   describeFieldType(a) === describeFieldType(b);
+
+const sameStores = (existing: CartDiscount, wanted: CartDiscountDraft): boolean => {
+  // The API answers with key references; the draft may carry either a key or an id.
+  const have = (existing.stores ?? []).map((s) => s.key).sort();
+  const want = (wanted.stores ?? []).map((s) => s.key ?? s.id ?? '').sort();
+  return have.length === want.length && have.every((entry, i) => entry === want[i]);
+};
 
 const sameMoney = (existing: CartDiscount, wanted: CartDiscountValueAbsoluteDraft): boolean => {
   if (existing.value.type !== 'absolute') {

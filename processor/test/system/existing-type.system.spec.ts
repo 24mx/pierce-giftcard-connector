@@ -14,6 +14,9 @@ describeSystem('a cart that already carries the storefront cart type', () => {
   const backend = loyalty(env);
   const routes = processor(env);
 
+  // Every denomination discount is scoped to a Store, so a storeless cart never gets one to apply.
+  const store = env.loyaltyStores[0];
+
   let email: string;
   let cart: Cart | undefined;
   let sessionId: string;
@@ -21,7 +24,13 @@ describeSystem('a cart that already carries the storefront cart type', () => {
   beforeEach(async () => {
     email = testEmail();
     await backend.grant(email, 10_000);
-    cart = await ct.createCart({ email, withStorefrontType: true });
+    cart = await ct.createCart({
+      email,
+      withStorefrontType: true,
+      storeKey: store.storeKey,
+      currency: store.currency,
+      country: store.country,
+    });
     sessionId = await ct.createSession(cart!.id);
   });
 
@@ -43,7 +52,7 @@ describeSystem('a cart that already carries the storefront cart type', () => {
 
     const reply = await routes.post<RedeemResponse>('/redeem', sessionId, {
       code: 'points',
-      redeemAmount: { centAmount: 300, currencyCode: env.currency },
+      redeemAmount: { centAmount: 300, currencyCode: store.currency },
     });
 
     expect(reply.status).toBe(200);

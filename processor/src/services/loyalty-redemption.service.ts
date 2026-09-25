@@ -310,8 +310,16 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
   }
 
   private decomposeOrRefuse(amount: AmountSchemaDTO): string[] {
+    const levels = getConfig().loyaltyDiscountLevelsByCurrency[amount.currencyCode];
+    if (!levels) {
+      throw new MockCustomError({
+        message: `no loyalty denominations are configured for ${amount.currencyCode}`,
+        code: 400,
+        key: 'CurrencyNotMatch',
+      });
+    }
     try {
-      return decompose(amount.centAmount);
+      return decompose(amount.centAmount, levels);
     } catch (e) {
       throw new MockCustomError({
         message: e instanceof Error ? e.message : String(e),

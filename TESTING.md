@@ -28,8 +28,11 @@ This repo owns layers 1–3. It does not own a browser test and should not grow 
   down when the cart carries another id, **the one-retry version-conflict path** (this is the only
   place that path is tested; it cannot be forced deterministically from outside).
 - `clients/loyalty.client.spec.ts` — URLs, headers, error mapping of the backend client.
-- `services/denominations.spec.ts` — decomposition into `D1…D131072`.
-- `connectors/loyalty-provisioning.spec.ts` — idempotent Type + 18 discounts.
+- `services/denominations.spec.ts` — decomposition into `D1…D2^(levels-1)`, where `levels` is the
+  currency's own level count (see [`docs/LOYALTY_DENOMINATIONS_EN.md`](docs/LOYALTY_DENOMINATIONS_EN.md)).
+- `connectors/loyalty-provisioning.spec.ts` — idempotent Type + one Store-scoped denomination set per
+  configured Store, and the convergence of an existing discount that drifted.
+- `config/config.spec.ts` — `LOYALTY_DISCOUNT_STORES` parsing and its validation errors.
 
 Rule of thumb: if a scenario needs a real commercetools cart *and* a real hold at the same time, it
 is not a unit test. Put it in layer 3.
@@ -60,7 +63,8 @@ unaffected. Configuration (all in `.env.template`, section "system tests"):
 | `SYSTEM_PROCESSOR_URL` | this processor on staging |
 | `SYSTEM_LOYALTY_API_URL`, `SYSTEM_LOYALTY_API_KEY` | the backend and the key its `/loyalty/**` filter expects |
 | `SYSTEM_CTP_*` | a commercetools API client with `manage_orders manage_sessions manage_cart_discounts view_types` — the suite creates carts and sessions and toggles one discount |
-| `SYSTEM_SKU`, `SYSTEM_COUNTRY`, `SYSTEM_CURRENCY` | a sellable variant and the market to build carts in |
+| `SYSTEM_SKU`, `SYSTEM_COUNTRY`, `SYSTEM_CURRENCY` | a sellable variant and the fallback market to build carts in |
+| `SYSTEM_LOYALTY_STORES` | comma-separated `storeKey:currency:country` triples (default `lu:EUR:LU,ro:RON:RO,se:SEK:SE`). Denomination discounts are Store-scoped, so every cart the suite creates is created **in a Store**; the single-store scenarios use the first entry |
 | `STOREFRONT_REPO` (repository variable), `STOREFRONT_DISPATCH_TOKEN` (secret) | `system-tests.yml` only: where and with what PAT to send the `repository_dispatch` after a green run |
 
 Scenarios, one file each:
@@ -69,8 +73,9 @@ Scenarios, one file each:
 |---|---|
 | `redeem-release-finalize.system.spec.ts` | redeem writes the two fields and the gross total drops by exactly the amount; balance is debited; release clears the fields and credits back; finalize then release is 409 `FinalizationInProgress` |
 | `existing-type.system.spec.ts` | a cart already carrying the storefront's custom type keeps it and only gains the two fields |
-| `discount-not-applied.system.spec.ts` | with one denomination discount deactivated, redeem answers 409 `DiscountNotApplied`, the hold is voided and the cart carries no fields. While this file runs, `loyalty-D1` is off on the shared project: any other redeem of an odd cent amount fails the same way until `afterAll` restores it |
+| `discount-not-applied.system.spec.ts` | with one denomination discount deactivated, redeem answers 409 `DiscountNotApplied`, the hold is voided and the cart carries no fields. While this file runs, `loyalty-<storeKey>-D1` (the first Store in `SYSTEM_LOYALTY_STORES`) is off on the shared project: any other redeem of an odd cent amount **in that Store** fails the same way until `afterAll` restores it |
 | `abandonment.system.spec.ts` | after redeem, the backend's sweep narrowed to this customer (`test-hooks/sweep?ttlMinutes=0&userId=…`) clears the cart and the balance is whole again |
+| `multi-store-redeem.system.spec.ts` | one case per entry in `SYSTEM_LOYALTY_STORES`: a cart in that Store redeems in that Store's own currency against that Store's own scoped denomination set |
 
 Every test creates its own cart and customer email, and `afterEach` calls the backend's
 `test-hooks/holds/release` for that email and deletes the cart, so a failed run leaves nothing behind.

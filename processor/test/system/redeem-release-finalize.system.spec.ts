@@ -17,6 +17,9 @@ describeSystem('redeem → release → finalize against a deployed processor', (
   const backend = loyalty(env);
   const routes = processor(env);
 
+  // Every denomination discount is scoped to a Store, so a storeless cart never gets one to apply.
+  const store = env.loyaltyStores[0];
+
   let email: string;
   let cart: Cart | undefined;
   let sessionId: string;
@@ -24,7 +27,12 @@ describeSystem('redeem → release → finalize against a deployed processor', (
   beforeEach(async () => {
     email = testEmail();
     await backend.grant(email, GRANT);
-    cart = await ct.createCart({ email });
+    cart = await ct.createCart({
+      email,
+      storeKey: store.storeKey,
+      currency: store.currency,
+      country: store.country,
+    });
     sessionId = await ct.createSession(cart!.id);
   });
 
@@ -47,7 +55,7 @@ describeSystem('redeem → release → finalize against a deployed processor', (
   const redeem = (centAmount: number) =>
     routes.post<RedeemResponse>('/redeem', sessionId, {
       code: 'points',
-      redeemAmount: { centAmount, currencyCode: env.currency },
+      redeemAmount: { centAmount, currencyCode: store.currency },
     });
 
   test('redeem takes exactly the amount off the gross total and debits the balance', async () => {

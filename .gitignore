@@ -6,3 +6,6 @@ docs/PIERCE_*.md
 
 # Local git worktrees used for isolated feature work
 .worktrees/
+
+# Superpowers planning notes, local only
+docs/superpowers/

@@ -1,5 +1,5 @@
 import { FormBuilder } from '../components/form';
-import { BaseOptions, EnablerOptions, GiftCardEnabler, GiftCardBuilder, PaymentResult } from './definitions';
+import { BaseOptions, EnablerOptions, GiftCardEnabler, GiftCardBuilder, RedemptionResult } from './definitions';
 
 export class MockEnabler implements GiftCardEnabler {
   setupData: Promise<{ baseOptions: BaseOptions }>;
@@ -14,7 +14,7 @@ export class MockEnabler implements GiftCardEnabler {
     throw new Error('something went wrong.');
   };
 
-  private static onComplete = (result: PaymentResult) => {
+  private static onComplete = (result: RedemptionResult) => {
     console.log('onSubmit', result);
   };
 

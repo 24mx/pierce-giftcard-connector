@@ -23,7 +23,7 @@ export type BaseOptions = {
   sessionId: string;
   processorUrl: string;
   locale?: string;
-  onComplete?: (result: PaymentResult) => void;
+  onComplete?: (result: RedemptionResult) => void;
   onError?: (error: any) => void;
 };
 
@@ -45,14 +45,18 @@ export type EnablerOptions = {
   processorUrl: string;
   sessionId: string;
   locale?: string;
-  onComplete?: (result: PaymentResult) => void;
+  onComplete?: (result: RedemptionResult) => void;
   onError?: (error: any) => void;
 };
 
-export type PaymentResult =
+// What /redeem hands back on success: no Payment exists, the redemption lives on the cart's custom
+// fields and is keyed by the redemptionId the processor minted (the id /finalize and /release take).
+export type RedemptionResult =
   | {
       isSuccess: true;
-      paymentReference: string;
+      redemptionId: string;
+      points: number;
+      appliedAmount: Amount;
     }
   | { isSuccess: false };
 

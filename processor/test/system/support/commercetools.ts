@@ -6,6 +6,12 @@ type CreateCartOptions = {
   email: string;
   /** Give the cart the storefront's custom type up front, so the processor takes the setCustomField path. */
   withStorefrontType?: boolean;
+  /** Creates the cart in this Store (`/in-store/key=...`) instead of at the project level. */
+  storeKey?: string;
+  /** Overrides `env.currency` - required together with `storeKey` when the store's market differs. */
+  currency?: string;
+  /** Overrides `env.country` - required together with `storeKey` when the store's market differs. */
+  country?: string;
 };
 
 export const commercetools = (env: SystemEnv) => {
@@ -30,23 +36,34 @@ export const commercetools = (env: SystemEnv) => {
   const getCart = async (id: string): Promise<Cart> => (await api.carts().withId({ ID: id }).get().execute()).body;
 
   return {
-    async createCart({ email, withStorefrontType = false }: CreateCartOptions): Promise<Cart> {
-      const response = await api
-        .carts()
-        .post({
-          body: {
-            currency: env.currency,
-            country: env.country,
-            customerEmail: email,
-            lineItems: [{ sku: env.sku, quantity: 1 }],
-            shippingAddress: { country: env.country },
-            ...(withStorefrontType && {
-              custom: { type: { typeId: 'type', key: env.storefrontCartTypeKey }, fields: {} },
-            }),
-          },
-        })
-        .execute();
-      return response.body;
+    async createCart({
+      email,
+      withStorefrontType = false,
+      storeKey,
+      currency = env.currency,
+      country = env.country,
+    }: CreateCartOptions): Promise<Cart> {
+      const path = storeKey
+        ? `${apiUrl}/${projectKey}/in-store/key=${storeKey}/carts`
+        : `${apiUrl}/${projectKey}/carts`;
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${await token()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currency,
+          country,
+          customerEmail: email,
+          lineItems: [{ sku: env.sku, quantity: 1 }],
+          shippingAddress: { country },
+          ...(withStorefrontType && {
+            custom: { type: { typeId: 'type', key: env.storefrontCartTypeKey }, fields: {} },
+          }),
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`cart creation failed: ${response.status} ${await response.text()}`);
+      }
+      return (await response.json()) as Cart;
     },
 
     getCart,
