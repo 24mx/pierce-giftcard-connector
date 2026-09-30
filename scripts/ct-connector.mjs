@@ -121,6 +121,10 @@ const createDeployment = async (loyaltyUrl) => {
         securedConfiguration: [
           { key: 'CTP_CLIENT_SECRET', value: env.CTP_CLIENT_SECRET },
           { key: 'LOYALTY_API_KEY', value: env.LOYALTY_API_KEY },
+          // Cloudflare Access service token for the backend's public hostname; sent only when set.
+          ...['LOYALTY_CF_ACCESS_CLIENT_ID', 'LOYALTY_CF_ACCESS_CLIENT_SECRET']
+            .filter((key) => env[key])
+            .map((key) => ({ key, value: env[key] })),
         ],
       },
       { applicationName: 'enabler' },

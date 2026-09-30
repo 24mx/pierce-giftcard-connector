@@ -152,6 +152,68 @@ describe('loyalty.client', () => {
     });
   });
 
+  describe('Cloudflare Access', () => {
+    test('sends the service token headers on every call when both halves are configured', async () => {
+      const behindAccess = new LoyaltyClient({
+        baseUrl: LOYALTY_URL,
+        timeoutMs: 5000,
+        apiKey: 's3cret',
+        accessClientId: 'id.access',
+        accessClientSecret: 'access-secret',
+      });
+      const seen: (string | null)[][] = [];
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
+          seen.push([
+            request.headers.get('cf-access-client-id'),
+            request.headers.get('cf-access-client-secret'),
+            request.headers.get('x-api-key'),
+          ]);
+          return HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 1,
+            amount: { centAmount: 1, currencyCode: 'EUR' },
+          });
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, ({ request }) => {
+          seen.push([
+            request.headers.get('cf-access-client-id'),
+            request.headers.get('cf-access-client-secret'),
+            request.headers.get('x-api-key'),
+          ]);
+          return HttpResponse.json({ redemptionId: 'redemption-1', points: 1, balance: 1 });
+        }),
+      );
+
+      await behindAccess.balance({ userId: 'demo@example.com', currencyCode: 'EUR' });
+      await behindAccess.voidHold({ redemptionId: 'redemption-1' });
+
+      expect(seen).toStrictEqual([
+        ['id.access', 'access-secret', 's3cret'],
+        ['id.access', 'access-secret', 's3cret'],
+      ]);
+    });
+
+    test('omits the service token headers unless both halves are configured', async () => {
+      const halfConfigured = new LoyaltyClient({ baseUrl: LOYALTY_URL, timeoutMs: 5000, accessClientId: 'id.access' });
+      let seen: (string | null)[] = [];
+      mockServer.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
+          seen = [request.headers.get('cf-access-client-id'), request.headers.get('cf-access-client-secret')];
+          return HttpResponse.json({
+            userId: 'demo@example.com',
+            points: 1,
+            amount: { centAmount: 1, currencyCode: 'EUR' },
+          });
+        }),
+      );
+
+      await halfConfigured.balance({ userId: 'demo@example.com', currencyCode: 'EUR' });
+
+      expect(seen).toStrictEqual([null, null]);
+    });
+  });
+
   describe('hold', () => {
     test('posts the hold keyed by redemption and cart', async () => {
       let receivedBody: unknown;

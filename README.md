@@ -151,6 +151,7 @@ Here you can see the details about various variables in configuration
 - `CTP_JWT_ISSUER`: The issuer inside JSON Web Token which is required in JWT validation process. Default value is `https://mc-api.europe-west1.gcp.commercetools.com`
 - `LOYALTY_API_URL`: The base URL of the Pierce loyalty backend, which owns the points ledger. The connector is only an HTTP client of it.
 - `LOYALTY_TIMEOUT_MS`: Timeout for calls to the loyalty backend, in milliseconds. Keep it well under the checkout widget's patience. Default value is `5000`.
+- `LOYALTY_CF_ACCESS_CLIENT_ID` / `LOYALTY_CF_ACCESS_CLIENT_SECRET` (secured): Cloudflare Access service token for the loyalty backend's public hostname, sent as `CF-Access-Client-Id` / `CF-Access-Client-Secret` on every call. Leave both empty when the backend is not behind Cloudflare Access.
 
 ## Development
 

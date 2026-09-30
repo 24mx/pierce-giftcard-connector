@@ -17,6 +17,12 @@ export type LoyaltyClientOptions = {
   timeoutMs: number;
   /** Shared secret the backend expects. Omitted when the backend runs unsecured, as it does locally. */
   apiKey?: string;
+  /**
+   * Cloudflare Access service token in front of the backend. Sent only when both halves are set, so a
+   * backend reached without Cloudflare (locally, or through a tunnel from a laptop) still works.
+   */
+  accessClientId?: string;
+  accessClientSecret?: string;
 };
 
 /**
@@ -30,11 +36,16 @@ export class LoyaltyClient {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly apiKey?: string;
+  private readonly accessHeaders: Record<string, string>;
 
   constructor(opts: LoyaltyClientOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
     this.timeoutMs = opts.timeoutMs;
     this.apiKey = opts.apiKey;
+    this.accessHeaders =
+      opts.accessClientId && opts.accessClientSecret
+        ? { 'cf-access-client-id': opts.accessClientId, 'cf-access-client-secret': opts.accessClientSecret }
+        : {};
   }
 
   /**
@@ -116,6 +127,7 @@ export class LoyaltyClient {
           'content-type': 'application/json',
           accept: 'application/json',
           ...(this.apiKey && { 'x-api-key': this.apiKey }),
+          ...this.accessHeaders,
           ...init.headers,
         },
         signal: AbortSignal.timeout(this.timeoutMs),
@@ -154,5 +166,7 @@ export const LoyaltyAPI = (): LoyaltyClient => {
     baseUrl: getConfig().loyaltyApiUrl,
     timeoutMs: Number(getConfig().loyaltyTimeoutMs),
     apiKey: getConfig().loyaltyApiKey || undefined,
+    accessClientId: getConfig().loyaltyAccessClientId || undefined,
+    accessClientSecret: getConfig().loyaltyAccessClientSecret || undefined,
   });
 };
