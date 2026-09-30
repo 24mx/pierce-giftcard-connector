@@ -7,6 +7,8 @@ import {
   LoyaltyHoldRequest,
   LoyaltyHoldResponse,
   LoyaltyLockRequest,
+  LoyaltyReleaseRequest,
+  LoyaltyReleaseResponse,
   LoyaltyVoidRequest,
 } from './types/loyalty.client.type';
 
@@ -48,6 +50,9 @@ export class LoyaltyClient {
       query.set('cartId', request.cartId);
       query.set('cartTotal', String(request.cartTotal));
     }
+    if (request.sessionExpiresAt !== undefined) {
+      query.set('sessionExpiresAt', request.sessionExpiresAt);
+    }
 
     return this.send<LoyaltyBalanceResponse>(`/loyalty/redemption/balance?${query.toString()}`, { method: 'GET' });
   }
@@ -72,6 +77,18 @@ export class LoyaltyClient {
    */
   public async voidHold(request: LoyaltyVoidRequest): Promise<LoyaltyHoldResponse> {
     return this.send<LoyaltyHoldResponse>('/loyalty/redemption/void', {
+      method: 'POST',
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Gives a redemption back the only safe way: the backend takes the discount off the cart first,
+   * then looks for an order, and credits the points only when no order can carry the discount. Use
+   * this, never `voidHold`, for a cart that may carry the redemption.
+   */
+  public async release(request: LoyaltyReleaseRequest): Promise<LoyaltyReleaseResponse> {
+    return this.send<LoyaltyReleaseResponse>('/loyalty/redemption/release', {
       method: 'POST',
       body: JSON.stringify(request),
     });

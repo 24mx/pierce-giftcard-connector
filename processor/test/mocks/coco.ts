@@ -51,10 +51,17 @@ export const getCartOK = (overrides: Partial<Cart> = {}) => {
   return { ...mockGetCartResult, ...overrides };
 };
 
+/**
+ * The customer id a test cart carries for `customerEmail`: a logged-in shopper whose account email is
+ * that address (see FakeCustomers in the service spec, which resolves ids of this shape).
+ */
+export const customerIdFor = (customerEmail: string) => `customer:${customerEmail}`;
+
 /** Cart of an identified customer, in the currency the loyalty backend supports. */
 export const getCartWithCustomerEmail = (customerEmail: string, overrides: Partial<Cart> = {}) =>
   getCartOK({
     customerEmail,
+    customerId: customerIdFor(customerEmail),
     totalPrice: {
       type: 'centPrecision',
       currencyCode: 'EUR',

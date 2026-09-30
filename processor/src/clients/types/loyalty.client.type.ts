@@ -13,6 +13,8 @@ export type LoyaltyBalanceRequest = {
   cartId?: string;
   /** The cart's total, in minor units of `currencyCode` — the ceiling the cap is measured against. */
   cartTotal?: number;
+  /** When the checkout session this quote runs under expires; recorded on the cart's open hold. */
+  sessionExpiresAt?: string;
 };
 
 /** The largest reservation this cart would accept, in points and in the balance's own currency. */
@@ -56,6 +58,8 @@ export type LoyaltyHoldRequest = {
    * this connector's arithmetic being right.
    */
   cartTotal: LoyaltyAmount;
+  /** When the checkout session this hold is taken under expires; the backend's sweep waits for it. */
+  sessionExpiresAt?: string;
 };
 
 /** Shared by hold and void: the points touched plus the resulting spendable balance. */
@@ -67,6 +71,23 @@ export type LoyaltyHoldResponse = {
 
 export type LoyaltyVoidRequest = {
   redemptionId: string;
+};
+
+export type LoyaltyReleaseRequest = {
+  redemptionId: string;
+};
+
+/**
+ * How the backend's release ended. VOIDED: the discount is off the cart and the points are back.
+ * CAPTURED: an order carries the discount, the points stay spent. AWAITING_ORDER: the cart already
+ * became an order the backend cannot see yet, the points stay withheld until it can.
+ */
+export type LoyaltyReleaseOutcome = 'VOIDED' | 'CAPTURED' | 'AWAITING_ORDER';
+
+export type LoyaltyReleaseResponse = {
+  redemptionId: string;
+  outcome: LoyaltyReleaseOutcome;
+  balance: number;
 };
 
 /**
@@ -82,6 +103,6 @@ export type LoyaltyErrorResponse = {
   error?: string;
   /** Present only on the /hold 409 for "this cart already has a different open reservation". */
   existingRedemptionId?: string;
-  /** Present only on the /lock or /void 409 for "this reservation is locked for final submission". */
+  /** Present only on the /lock, /void or /release 409 for "this reservation is locked for final submission". */
   lockedUntil?: string;
 };

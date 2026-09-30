@@ -25,7 +25,7 @@ Routes (all session-authenticated via `x-session-id`):
 | `POST /balance` | Spendable points and the cart cap, measured against the cart's *undiscounted* total. `openRedemptionId` is read off the cart's custom field. |
 | `POST /redeem` | Releases any redemption the cart already carries, holds the new amount, writes the two fields and verifies the cart's gross total dropped by exactly the requested amount. Anything else voids the hold, clears the fields and answers `409 DiscountNotApplied`. |
 | `POST /finalize` | Locks the hold for the checkout's final submission. |
-| `POST /release` | The storefront's "remove points": voids the hold, then clears the fields. |
+| `POST /release` | The storefront's "remove points": the loyalty backend's `/release` takes the discount off the cart first, then looks for an order, and gives the points back only when none carries it. |
 
 `POST /payment-intents/:id` operations (capture/cancel/refund/reverse) are alarms: no Payment exists for commercetools to route.
 
