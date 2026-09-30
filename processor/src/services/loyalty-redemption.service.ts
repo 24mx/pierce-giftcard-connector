@@ -32,10 +32,12 @@ import { AbstractGiftCardService } from './abstract-giftcard.service';
 import { LoyaltyAPI } from '../clients/loyalty.client';
 import { LoyaltyHoldResponse } from '../clients/types/loyalty.client.type';
 import { LoyaltyApiError } from '../errors/loyalty-api.error';
-import { getCartIdFromContext } from '../libs/fastify/context/context';
+import { getCartIdFromContext, getCtSessionIdFromContext } from '../libs/fastify/context/context';
 import { MockCustomError } from '../errors/mock-api.error';
 import { BalanceConverter } from './converters/balance-converter';
 import { CartRedemptionFieldsClient } from '../clients/cart-redemption-fields.client';
+import { CustomerEmailClient } from '../clients/customer-email.client';
+import { SessionExpiryClient } from '../clients/session-expiry.client';
 import { decompose, sumDenominations } from './denominations';
 import packageJSON from '../../package.json';
 import { log } from '../libs/logger';
@@ -45,6 +47,8 @@ export type LoyaltyRedemptionServiceOptions = {
   ctPaymentService: CommercetoolsPaymentService;
   ctOrderService: CommercetoolsOrderService;
   cartFields: CartRedemptionFieldsClient;
+  customers: CustomerEmailClient;
+  sessions: SessionExpiryClient;
 };
 
 /**
@@ -60,11 +64,15 @@ export type LoyaltyRedemptionServiceOptions = {
  */
 export class LoyaltyRedemptionService extends AbstractGiftCardService {
   private readonly cartFields: CartRedemptionFieldsClient;
+  private readonly customers: CustomerEmailClient;
+  private readonly sessions: SessionExpiryClient;
   private readonly balanceConverter = new BalanceConverter();
 
   constructor(opts: LoyaltyRedemptionServiceOptions) {
     super(opts.ctCartService, opts.ctPaymentService, opts.ctOrderService);
     this.cartFields = opts.cartFields;
+    this.customers = opts.customers;
+    this.sessions = opts.sessions;
   }
 
   async status(): Promise<StatusResponse> {
@@ -73,9 +81,11 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       log: appLogger,
       checks: [
         healthCheckCommercetoolsPermissions({
-          // manage_orders covers the cart updates; the payment-intents route keeps its own scopes.
+          // manage_orders covers the cart updates, view_customers the points owner's account; the
+          // payment-intents route keeps its own scopes.
           requiredPermissions: [
             'manage_orders',
+            'view_customers',
             'view_sessions',
             'view_api_clients',
             'introspect_oauth_tokens',
@@ -115,7 +125,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
    */
   async balance(_code: string): Promise<BalanceResponseSchemaDTO> {
     const cart = await this.ctCartService.getCart({ id: getCartIdFromContext() });
-    const userId = this.getLoyaltyUserId(cart);
+    const userId = await this.getLoyaltyUserId(cart);
     const carried = this.cartFields.read(cart);
     const stillOwed = await this.ctCartService.getPaymentAmount({ cart });
     const undiscounted = stillOwed.centAmount + sumDenominations(carried.denominations);
@@ -125,6 +135,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
         currencyCode: stillOwed.currencyCode,
         cartId: cart.id,
         cartTotal: undiscounted,
+        sessionExpiresAt: await this.currentSessionExpiry(),
       });
       if (!result.cap) {
         // We named a cart, so the backend owes a cap. Reporting 0 instead would be indistinguishable
@@ -145,15 +156,16 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     const amount = opts.data.redeemAmount;
     const denominations = this.decomposeOrRefuse(amount);
     let cart = await this.ctCartService.getCart({ id: getCartIdFromContext() });
-    const userId = this.getLoyaltyUserId(cart);
+    const userId = await this.getLoyaltyUserId(cart);
 
     // A previous redeem on this cart is replaced, never stacked: the backend allows one open hold per
-    // cart, and the field can only hold one redemption anyway. Void first (a lock conflict aborts here,
-    // before anything moved), then take the discount off so the floor below is measured undiscounted.
+    // cart, and the field can only hold one redemption anyway. The backend releases it (discount off
+    // the cart first, points back only then; a lock aborts before anything moved), and the cart is
+    // read again so the floor below is measured undiscounted.
     const carried = this.cartFields.read(cart);
     if (carried.redemptionId) {
-      await this.voidOrAbortOnLock(carried.redemptionId, 'releaseOnRedeem');
-      cart = await this.clearOrSurface(cart, carried.redemptionId, 'releaseOnRedeem');
+      await this.releaseOrAbort(carried.redemptionId);
+      cart = await this.ctCartService.getCart({ id: cart.id });
     }
 
     const stillOwed = await this.ctCartService.getPaymentAmount({ cart });
@@ -166,6 +178,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
         cartId: cart.id,
         amount,
         cartTotal: { centAmount: stillOwed.centAmount, currencyCode: stillOwed.currencyCode },
+        sessionExpiresAt: await this.currentSessionExpiry(),
       });
     } catch (e) {
       // Nothing is on the cart yet, so an uncertain hold (timeout, 5xx) leaves at worst a hold the
@@ -178,7 +191,9 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     try {
       ({ baseline, updated } = await this.cartFields.write(cart, { redemptionId, denominations }));
     } catch (e) {
-      await this.closeHold(redemptionId, 'writeFailed');
+      // The write may have reached commercetools before the failure surfaced, so only the backend's
+      // clear-first release is safe here.
+      await this.releaseQuietly(redemptionId, 'writeFailed');
       throw e;
     }
 
@@ -189,16 +204,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       // A stopping promotion above the loyalty discounts, a currency the denominations are not
       // provisioned in, or a cart too small for the amount: commercetools did not do what the hold
       // assumed, so undo both sides rather than leave points spent against a partial discount.
-      try {
-        await this.cartFields.clear(updated, redemptionId);
-      } catch (clearError) {
-        log.error('Could not take the partially applied discount off the cart.', {
-          cartId: cart.id,
-          redemptionId,
-          error: clearError instanceof Error ? clearError.message : String(clearError),
-        });
-      }
-      await this.closeHold(redemptionId, 'discountNotApplied');
+      await this.releaseQuietly(redemptionId, 'discountNotApplied');
       throw new MockCustomError({
         message: `commercetools applied ${applied} of the requested ${amount.centAmount} ${amount.currencyCode}`,
         code: 409,
@@ -216,9 +222,9 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
 
   /**
    * The storefront's "remove points". The session proves the caller owns THIS cart and nothing else,
-   * so a redemption id the cart does not carry is refused before the ledger is touched - voiding it
-   * would strip someone else's checkout of the hold behind its discount. Then void first, so a lock
-   * conflict (a competing finalize) is caught before the cart moves, and take the discount off.
+   * so a redemption id the cart does not carry is refused before the ledger is touched - releasing it
+   * would strip someone else's checkout of the hold behind its discount. The backend then takes the
+   * discount off and gives the points back (a lock conflict refuses before anything moved).
    */
   async release(opts: { data: ReleaseRequestDTO }): Promise<ReleaseResponseDTO> {
     const cart = await this.ctCartService.getCart({ id: getCartIdFromContext() });
@@ -229,8 +235,16 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
         key: 'RedemptionNotOnCart',
       });
     }
-    await this.voidOrAbortOnLock(opts.data.redemptionId, 'release');
-    await this.clearOrSurface(cart, opts.data.redemptionId, 'release');
+    try {
+      await this.releaseOrAbort(opts.data.redemptionId);
+    } catch (e) {
+      if (!(e instanceof LoyaltyApiError && e.status === 404)) {
+        throw e;
+      }
+      // The backend holds nothing for this discount, so there are no points to give back: taking the
+      // discount off is all that is left, and it cannot hand anything away.
+      await this.cartFields.clear(cart, opts.data.redemptionId);
+    }
     return { result: 'Success' };
   }
 
@@ -279,29 +293,6 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     throw this.unsupported('reverse', request.payment?.id);
   }
 
-  /**
-   * The hold is already voided when this runs, so a failure here leaves a discount on the cart with
-   * no hold behind it - the one state the backend's sweep cannot repair (it only clears carts of OPEN
-   * holds). It is logged with both ids for reconciliation and surfaced to the caller rather than
-   * passed off as success; if the shopper checks out anyway, the settle-time audit reports it.
-   */
-  private async clearOrSurface(cart: Cart, redemptionId: string, action: string): Promise<Cart> {
-    try {
-      return await this.cartFields.clear(cart, redemptionId);
-    } catch (e) {
-      log.error(
-        'Voided the reservation but could not take its discount off the cart: the cart now carries an unbacked discount.',
-        {
-          cartId: cart.id,
-          redemptionId,
-          action,
-          error: e instanceof Error ? e.message : String(e),
-        },
-      );
-      throw e;
-    }
-  }
-
   private unsupported(operation: string, paymentId: string | undefined): Error {
     return new ErrorGeneral('operation not supported', {
       fields: { pspReference: paymentId },
@@ -329,27 +320,46 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     }
   }
 
-  /** The loyalty userId is the cart's customer email, lowercased. */
-  private getLoyaltyUserId(cart: Cart): string {
-    const customerEmail = cart.customerEmail?.trim().toLowerCase();
-    if (!customerEmail) {
+  /** Expiry of the checkout session this request runs under; undefined when unknown (sent as absent). */
+  private async currentSessionExpiry(): Promise<string | undefined> {
+    let sessionId: string | undefined;
+    try {
+      sessionId = getCtSessionIdFromContext();
+    } catch {
+      sessionId = undefined;
+    }
+    return (await this.sessions.expiryOf(sessionId ?? '')) ?? undefined;
+  }
+
+  /**
+   * The loyalty userId is the email of the customer account the cart belongs to, lowercased. A guest
+   * cart (no customerId) is refused however plausible its email looks: the session only proves the
+   * caller owns this cart, and a guest can write any address onto it.
+   */
+  private async getLoyaltyUserId(cart: Cart): Promise<string> {
+    const accountEmail = cart.customerId ? await this.customers.emailOf(cart.customerId) : null;
+    const userId = accountEmail?.trim().toLowerCase();
+    if (!userId) {
       throw new MockCustomError({
-        message: 'the cart has no customer email, loyalty points cannot be identified',
+        message: 'the cart belongs to no customer account, loyalty points cannot be identified',
         code: 400,
         key: 'CustomerNotIdentified',
       });
     }
-    return customerEmail;
+    return userId;
   }
 
   /**
-   * Voids a hold; only a finalization lock aborts the caller. Every other failure (backend unreachable,
-   * hold already gone) is logged and swallowed - the backend's sweep recovers the ledger side at TTL,
-   * and the caller still has to take the discount off the cart.
+   * Releases a redemption through the backend and insists that it really went back: a lock refuses
+   * with FinalizationInProgress, and an outcome other than VOIDED means an order already carries the
+   * discount - the caller must not go on as if the cart were free of it. A backend 404 (no such hold)
+   * is rethrown as is, for the caller to decide; any other failure fails the operation, leaving the
+   * cart and the hold exactly as they were.
    */
-  private async voidOrAbortOnLock(redemptionId: string, action: string): Promise<void> {
+  private async releaseOrAbort(redemptionId: string): Promise<void> {
+    let outcome: string;
     try {
-      await LoyaltyAPI().voidHold({ redemptionId });
+      outcome = (await LoyaltyAPI().release({ redemptionId })).outcome;
     } catch (e) {
       if (e instanceof LoyaltyApiError && e.status === 409 && e.body?.lockedUntil) {
         throw new MockCustomError({
@@ -358,21 +368,34 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
           key: 'FinalizationInProgress',
         });
       }
-      log.error(
-        'Could not release the loyalty reservation: the points stay debited until the backend sweep recovers them at TTL.',
-        { redemptionId, action, error: e instanceof LoyaltyApiError ? e.message : String(e) },
-      );
+      if (e instanceof LoyaltyApiError && e.status === 404) {
+        throw e;
+      }
+      throw this.toConnectorError(e);
+    }
+    if (outcome !== 'VOIDED') {
+      throw new MockCustomError({
+        message: `the redemption already reached an order (${outcome}), it cannot be released`,
+        code: 409,
+        key: 'GenericError',
+      });
     }
   }
 
-  private async closeHold(redemptionId: string, action: string): Promise<void> {
+  /**
+   * Undoes a hold whose cart write failed or did not apply. Best effort: if the backend cannot release
+   * it now, the hold stays open and the backend's sweep releases it (cart first) later - the points are
+   * withheld meanwhile, never handed back against a discount.
+   */
+  private async releaseQuietly(redemptionId: string, action: string): Promise<void> {
     try {
-      await LoyaltyAPI().voidHold({ redemptionId });
+      await LoyaltyAPI().release({ redemptionId });
     } catch (e) {
-      log.error(
-        'Could not release the loyalty reservation after a failed cart write: the backend sweep recovers it at TTL.',
-        { redemptionId, action, error: e instanceof LoyaltyApiError ? e.message : String(e) },
-      );
+      log.error('Could not release the loyalty reservation: the backend sweep releases it later.', {
+        redemptionId,
+        action,
+        error: e instanceof LoyaltyApiError ? e.message : String(e),
+      });
     }
   }
 

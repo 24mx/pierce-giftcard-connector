@@ -21,7 +21,7 @@ This repo owns layers 1–3. It does not own a browser test and should not grow 
 ## Layer 1 — unit tests in `processor/test`
 
 - `loyalty-redemption.service.spec.ts` — the orchestration: hold → write fields → verify the drop →
-  `DiscountNotApplied` rollback; release order (void, then clear, `FinalizationInProgress` aborts);
+  `DiscountNotApplied` rollback; release through the backend (cart cleared before the points go back, `FinalizationInProgress` aborts);
   finalize; `openRedemptionId` / `openRedemptionLocked` on balance; payment-intents operations refused.
   Backend is msw, the cart fields client is the in-memory `FakeCartFields`.
 - `clients/cart-redemption-fields.client.spec.ts` — `setCustomType` vs `setCustomField`, clear stands

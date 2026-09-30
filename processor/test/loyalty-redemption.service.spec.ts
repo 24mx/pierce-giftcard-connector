@@ -13,7 +13,9 @@ import {
   CartRedemptionWriteResult,
 } from '../src/clients/cart-redemption-fields.client';
 import { MockCustomError } from '../src/errors/mock-api.error';
-import { cartCarryingRedemption, getCartOK, getCartWithCustomerEmail } from './mocks/coco';
+import { CustomerEmailClient } from '../src/clients/customer-email.client';
+import { SessionExpiryClient } from '../src/clients/session-expiry.client';
+import { cartCarryingRedemption, customerIdFor, getCartOK, getCartWithCustomerEmail } from './mocks/coco';
 
 const LOYALTY_URL = 'https://loyalty.test';
 
@@ -83,6 +85,30 @@ class FakeCartFields implements CartRedemptionFieldsClient {
   }
 }
 
+/**
+ * Resolves the ids test carts carry (`customerIdFor(email)`) to that email, as a logged-in customer's
+ * account would; `accounts` overrides that for a customer whose account email differs from the cart's.
+ */
+class FakeCustomers implements CustomerEmailClient {
+  public accounts = new Map<string, string | null>();
+
+  async emailOf(customerId: string): Promise<string | null> {
+    if (this.accounts.has(customerId)) {
+      return this.accounts.get(customerId) ?? null;
+    }
+    return customerId.startsWith('customer:') ? customerId.slice('customer:'.length) : null;
+  }
+}
+
+/** The checkout session the request runs under expires at `expiry` (null: it could not be read). */
+class FakeSessions implements SessionExpiryClient {
+  public expiry: string | null = '2099-01-01T10:20:45.661Z';
+
+  async expiryOf(): Promise<string | null> {
+    return this.expiry;
+  }
+}
+
 const setupConfig = (extra: Record<string, unknown> = {}) =>
   jest.spyOn(Config, 'getConfig').mockReturnValue({
     loyaltyApiUrl: LOYALTY_URL,
@@ -106,6 +132,14 @@ const balanceBody = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+/** Answers every release with VOIDED and records which redemption ids were released. */
+const releaseRecorder = (released: string[]) =>
+  http.post(`${LOYALTY_URL}/loyalty/redemption/release`, async ({ request }) => {
+    const { redemptionId } = (await request.json()) as { redemptionId: string };
+    released.push(redemptionId);
+    return HttpResponse.json({ redemptionId, outcome: 'VOIDED', balance: 5000 });
+  });
+
 const holdEcho = () =>
   http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
     const body = (await request.json()) as { redemptionId: string; amount: { centAmount: number } };
@@ -115,17 +149,23 @@ const holdEcho = () =>
 describe('loyalty-redemption.service', () => {
   const server = setupServer();
   let cartFields: FakeCartFields;
+  let customers: FakeCustomers;
+  let sessions: FakeSessions;
   let service: LoyaltyRedemptionService;
 
   beforeAll(() => server.listen({ onUnhandledRequest: 'bypass' }));
   beforeEach(() => {
     jest.resetAllMocks();
     cartFields = new FakeCartFields();
+    customers = new FakeCustomers();
+    sessions = new FakeSessions();
     service = new LoyaltyRedemptionService({
       ctCartService: paymentSDK.ctCartService,
       ctPaymentService: paymentSDK.ctPaymentService,
       ctOrderService: paymentSDK.ctOrderService,
       cartFields,
+      customers,
+      sessions,
     });
     // The real getPaymentAmount fetches every payment on the cart from commercetools; there are none
     // in this model, so "still owed" is simply the cart's own total.
@@ -214,6 +254,91 @@ describe('loyalty-redemption.service', () => {
       await expect(service.balance('')).rejects.toMatchObject({ code: 'CustomerNotIdentified' });
     });
 
+    test('refuses a guest cart: an email typed into the cart does not prove whose points they are', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('victim@example.com', { customerId: undefined }));
+      let backendCalled = false;
+      server.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, () => {
+          backendCalled = true;
+          return HttpResponse.json(balanceBody());
+        }),
+      );
+
+      await expect(service.balance('')).rejects.toMatchObject({ code: 'CustomerNotIdentified' });
+      expect(backendCalled).toBe(false);
+    });
+
+    test('names the customer account, not the email written on the cart', async () => {
+      setupConfig();
+      const cart = getCartWithCustomerEmail('someone-else@example.com');
+      customers.accounts.set(customerIdFor('someone-else@example.com'), 'Owner@Example.COM');
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      let url: URL | undefined;
+      server.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
+          url = new URL(request.url);
+          return HttpResponse.json(balanceBody());
+        }),
+      );
+
+      await service.balance('');
+
+      expect(url?.searchParams.get('userId')).toBe('owner@example.com');
+    });
+
+    /**
+     * The storefront re-quotes on every widget load, including under each new checkout session on the
+     * same cart; the backend's sweep keeps its hands off the cart until the latest one has expired.
+     */
+    test('reports the expiry of the checkout session it was called under', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      let url: URL | undefined;
+      server.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
+          url = new URL(request.url);
+          return HttpResponse.json(balanceBody());
+        }),
+      );
+
+      await service.balance('');
+
+      expect(url?.searchParams.get('sessionExpiresAt')).toBe('2099-01-01T10:20:45.661Z');
+    });
+
+    test('still quotes when the session expiry cannot be read', async () => {
+      setupConfig();
+      sessions.expiry = null;
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      let url: URL | undefined;
+      server.use(
+        http.get(`${LOYALTY_URL}/loyalty/redemption/balance`, ({ request }) => {
+          url = new URL(request.url);
+          return HttpResponse.json(balanceBody());
+        }),
+      );
+
+      await service.balance('');
+
+      expect(url?.searchParams.has('sessionExpiresAt')).toBe(false);
+    });
+
+    test('refuses a cart whose customer account no longer exists', async () => {
+      setupConfig();
+      const cart = getCartWithCustomerEmail('gone@example.com');
+      customers.accounts.set(customerIdFor('gone@example.com'), null);
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+
+      await expect(service.balance('')).rejects.toMatchObject({ code: 'CustomerNotIdentified' });
+    });
+
     test('fails when the backend answers without a cap', async () => {
       setupConfig();
       jest
@@ -232,6 +357,42 @@ describe('loyalty-redemption.service', () => {
   describe('redeem', () => {
     const redeem = (centAmount: number) =>
       service.redeem({ data: { code: '', redeemAmount: { centAmount, currencyCode: 'EUR' } } });
+
+    test('tells the backend when the checkout session behind the hold expires', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      let holdBody: Record<string, unknown> = {};
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
+          holdBody = (await request.json()) as Record<string, unknown>;
+          return HttpResponse.json({ redemptionId: holdBody.redemptionId, points: 1000, balance: 0 });
+        }),
+      );
+
+      await redeem(1000);
+
+      expect(holdBody.sessionExpiresAt).toBe('2099-01-01T10:20:45.661Z');
+    });
+
+    test('refuses a guest cart before anything is held or written', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('victim@example.com', { customerId: undefined }));
+      let held = false;
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
+          held = true;
+          return HttpResponse.json({});
+        }),
+      );
+
+      await expect(redeem(1000)).rejects.toMatchObject({ code: 'CustomerNotIdentified' });
+      expect(held).toBe(false);
+      expect(cartFields.writes).toStrictEqual([]);
+    });
 
     test('holds first, then writes the denominations, and reports the applied amount', async () => {
       setupConfig();
@@ -306,59 +467,69 @@ describe('loyalty-redemption.service', () => {
       expect(result).toMatchObject({ result: 'Success', appliedAmount: { centAmount: 2400, currencyCode: 'EUR' } });
     });
 
-    test('voids the hold and clears the cart when commercetools applied a different amount', async () => {
+    test('releases the hold through the backend when commercetools applied a different amount', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
-      const voided: string[] = [];
-      server.use(
-        holdEcho(),
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
-          voided.push(((await request.json()) as { redemptionId: string }).redemptionId);
-          return HttpResponse.json({ redemptionId: voided[0], points: 2400, balance: 2400 });
-        }),
-      );
+      const released: string[] = [];
+      server.use(holdEcho(), releaseRecorder(released));
       // A StopAfterThisDiscount promotion above ours: the cart only dropped by 1000.
       cartFields.nextTotalAfterWrite = 4999 - 1000;
 
       const result = redeem(2400);
 
       await expect(result).rejects.toMatchObject({ code: 'DiscountNotApplied', httpErrorStatus: 409 });
-      expect(voided).toHaveLength(1);
-      expect(cartFields.clears).toBe(1);
+      expect(released).toHaveLength(1);
+      // The backend takes the discount off before it gives the points back; the connector never does.
+      expect(cartFields.clears).toBe(0);
     });
 
-    test('voids the hold when the cart write itself fails', async () => {
+    test('still refuses the redeem when the backend cannot release after a discount mismatch', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
-      let voided = 0;
       server.use(
         holdEcho(),
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () => {
-          voided++;
-          return HttpResponse.json({ redemptionId: 'x', points: 2400, balance: 2400 });
-        }),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () => HttpResponse.json({}, { status: 500 })),
       );
-      cartFields.failWriteWith = new Error('commercetools is down');
+      cartFields.nextTotalAfterWrite = 4999 - 1000;
 
-      await expect(redeem(2400)).rejects.toThrow('commercetools is down');
-      expect(voided).toBe(1);
+      await expect(redeem(2400)).rejects.toMatchObject({ code: 'DiscountNotApplied' });
+      expect(cartFields.clears).toBe(0);
     });
 
-    test('releases the redemption the cart already carries before holding the new amount', async () => {
+    test('releases the hold through the backend when the cart write itself fails', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
-        .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-old', ['D1024'], 3975));
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      const released: string[] = [];
+      server.use(holdEcho(), releaseRecorder(released));
+      cartFields.failWriteWith = new Error('commercetools is down');
+
+      await expect(redeem(2400)).rejects.toThrow('commercetools is down');
+      // The write may have landed before the failure surfaced: only the backend's clear-first release
+      // is safe here, a bare void would leave that discount without a hold.
+      expect(released).toHaveLength(1);
+    });
+
+    test('releases the redemption the cart already carries through the backend before holding the new amount', async () => {
+      setupConfig();
+      const carrying = cartCarryingRedemption('demo@example.com', 'red-old', ['D1024'], 3975);
+      // The backend's release took the old discount off, so the cart is read again afterwards.
+      const cleared = getCartWithCustomerEmail('demo@example.com', { id: carrying.id, version: carrying.version + 1 });
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValueOnce(carrying)
+        .mockResolvedValueOnce(cleared);
       const calls: string[] = [];
       let holdBody: Record<string, unknown> = {};
       server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
-          calls.push('void:' + ((await request.json()) as { redemptionId: string }).redemptionId);
-          return HttpResponse.json({ redemptionId: 'red-old', points: 1024, balance: 2600 });
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, async ({ request }) => {
+          calls.push('release:' + ((await request.json()) as { redemptionId: string }).redemptionId);
+          return HttpResponse.json({ redemptionId: 'red-old', outcome: 'VOIDED', balance: 2600 });
         }),
         http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
           holdBody = (await request.json()) as Record<string, unknown>;
@@ -369,9 +540,9 @@ describe('loyalty-redemption.service', () => {
 
       await redeem(2400);
 
-      expect(calls).toStrictEqual(['void:red-old', 'hold']);
-      expect(cartFields.clears).toBe(1);
-      // The floor is measured against the cart with the OLD discount taken off again: 3975 + 1024.
+      expect(calls).toStrictEqual(['release:red-old', 'hold']);
+      expect(cartFields.clears).toBe(0);
+      // The floor is measured against the cart with the OLD discount taken off again.
       expect(holdBody.cartTotal).toStrictEqual({ centAmount: 4999, currencyCode: 'EUR' });
       expect(holdBody.redemptionId).not.toBe('red-old');
     });
@@ -383,7 +554,7 @@ describe('loyalty-redemption.service', () => {
         .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-locked', ['D1024'], 3975));
       let held = 0;
       server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () =>
           HttpResponse.json({ error: 'locked', lockedUntil: '2026-01-01T00:00:00' }, { status: 409 }),
         ),
         http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
@@ -394,27 +565,43 @@ describe('loyalty-redemption.service', () => {
 
       await expect(redeem(2400)).rejects.toMatchObject({ code: 'FinalizationInProgress', httpErrorStatus: 409 });
       expect(held).toBe(0);
-      expect(cartFields.clears).toBe(0);
     });
 
-    test('does not hold the new amount when the old redemption was voided but its discount could not be cleared', async () => {
+    test('does not hold the new amount when the backend could not release the old redemption', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-old', ['D1024'], 3975));
       let held = 0;
       server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
-          HttpResponse.json({ redemptionId: 'red-old', points: 1024, balance: 2600 }),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () => HttpResponse.json({}, { status: 500 })),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
+          held++;
+          return HttpResponse.json({});
+        }),
+      );
+
+      await expect(redeem(2400)).rejects.toMatchObject({ code: 'GenericError' });
+      expect(held).toBe(0);
+    });
+
+    test('does not hold the new amount when the old redemption already reached an order', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-old', ['D1024'], 3975));
+      let held = 0;
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () =>
+          HttpResponse.json({ redemptionId: 'red-old', outcome: 'AWAITING_ORDER', balance: 2600 }),
         ),
         http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, () => {
           held++;
           return HttpResponse.json({});
         }),
       );
-      cartFields.failClearWith = new Error('commercetools is down');
 
-      await expect(redeem(2400)).rejects.toThrow('commercetools is down');
+      await expect(redeem(2400)).rejects.toMatchObject({ code: 'GenericError' });
       expect(held).toBe(0);
     });
 
@@ -532,37 +719,28 @@ describe('loyalty-redemption.service', () => {
   });
 
   describe('release', () => {
-    test('voids the hold, then clears the cart', async () => {
+    test('releases through the backend and never touches the cart itself', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-1', ['D1024'], 3975));
-      const calls: string[] = [];
-      server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
-          calls.push('void:' + ((await request.json()) as { redemptionId: string }).redemptionId);
-          return HttpResponse.json({ redemptionId: 'red-1', points: 1024, balance: 2600 });
-        }),
-      );
-      const originalClear = cartFields.clear.bind(cartFields);
-      cartFields.clear = async (c) => {
-        calls.push('clear');
-        return originalClear(c);
-      };
+      const released: string[] = [];
+      server.use(releaseRecorder(released));
 
       const result = await service.release({ data: { redemptionId: 'red-1' } });
 
       expect(result).toStrictEqual({ result: 'Success' });
-      expect(calls).toStrictEqual(['void:red-1', 'clear']);
+      expect(released).toStrictEqual(['red-1']);
+      expect(cartFields.clears).toBe(0);
     });
 
-    test('a locked hold refuses the release and leaves the cart alone', async () => {
+    test('a locked hold refuses the release', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-1', ['D1024'], 3975));
       server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () =>
           HttpResponse.json({ error: 'locked', lockedUntil: '2026-01-01T00:00:00' }, { status: 409 }),
         ),
       );
@@ -573,13 +751,17 @@ describe('loyalty-redemption.service', () => {
       expect(cartFields.clears).toBe(0);
     });
 
-    test('still clears the cart when the hold is already gone', async () => {
+    /**
+     * A discount the backend holds nothing for: there are no points to give back, so the only thing
+     * left to do is take the discount off, and nothing can go wrong doing it here.
+     */
+    test('clears the cart itself when the backend knows no such hold', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-1', ['D1024'], 3975));
       server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () =>
           HttpResponse.json({ error: 'no such hold' }, { status: 404 }),
         ),
       );
@@ -590,47 +772,51 @@ describe('loyalty-redemption.service', () => {
 
     /**
      * The session only proves the caller owns THIS cart. A redemption id that this cart does not carry
-     * belongs to someone else's checkout, and voiding it would leave their discount without a hold.
+     * belongs to someone else's checkout, and releasing it would strip their discount of its hold.
      */
-    test('refuses to void a redemption the cart does not carry', async () => {
+    test('refuses to release a redemption the cart does not carry', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-other', ['D1024'], 3975));
-      let voided = 0;
-      server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () => {
-          voided++;
-          return HttpResponse.json({ redemptionId: 'red-1', points: 0, balance: 0 });
-        }),
-      );
+      const released: string[] = [];
+      server.use(releaseRecorder(released));
 
       await expect(service.release({ data: { redemptionId: 'red-1' } })).rejects.toMatchObject({
         code: 'RedemptionNotOnCart',
         httpErrorStatus: 404,
       });
-      expect(voided).toBe(0);
+      expect(released).toStrictEqual([]);
       expect(cartFields.clears).toBe(0);
     });
 
-    /**
-     * The void already happened when the clear fails, so the discount now sits on the cart with no hold
-     * behind it. That must not pass as success: the storefront sees the failure, and the backend's
-     * settle-time audit catches the discount if the shopper checks out anyway.
-     */
-    test('surfaces a clear failure after the void instead of reporting success', async () => {
+    test('surfaces a backend failure instead of reporting success', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-1', ['D1024'], 3975));
+      server.use(http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () => HttpResponse.json({}, { status: 500 })));
+
+      await expect(service.release({ data: { redemptionId: 'red-1' } })).rejects.toMatchObject({
+        code: 'GenericError',
+      });
+      expect(cartFields.clears).toBe(0);
+    });
+
+    test('does not report success when the cart already became an order', async () => {
       setupConfig();
       jest
         .spyOn(DefaultCartService.prototype, 'getCart')
         .mockResolvedValue(cartCarryingRedemption('demo@example.com', 'red-1', ['D1024'], 3975));
       server.use(
-        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, () =>
-          HttpResponse.json({ redemptionId: 'red-1', points: 1024, balance: 2600 }),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () =>
+          HttpResponse.json({ redemptionId: 'red-1', outcome: 'CAPTURED', balance: 0 }),
         ),
       );
-      cartFields.failClearWith = new Error('cart is frozen');
 
-      await expect(service.release({ data: { redemptionId: 'red-1' } })).rejects.toThrow('cart is frozen');
+      await expect(service.release({ data: { redemptionId: 'red-1' } })).rejects.toMatchObject({
+        code: 'GenericError',
+      });
     });
   });
 

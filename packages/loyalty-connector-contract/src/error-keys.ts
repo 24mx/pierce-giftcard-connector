@@ -5,7 +5,7 @@
 export const LOYALTY_ERROR_KEYS = [
   /** Something the processor did not anticipate; the storefront shows a generic failure and re-quotes. */
   'GenericError',
-  /** The cart has no customerEmail; only a logged-in shopper can pay with points. */
+  /** The cart belongs to no customer account (a guest cart, or the account is gone); only a logged-in shopper can pay with points. */
   'CustomerNotIdentified',
   /** The ledger cannot cover the requested amount. */
   'InsufficientFunds',
