@@ -37,7 +37,7 @@ export async function ensureOrderCheckExtension(
   }
   const destination: ExtensionDestination = {
     type: 'HTTP',
-    url: `${opts.serviceUrl.replace(/\/+$/, '')}/order-check`,
+    url: orderCheckUrl(opts.serviceUrl),
     authentication: { type: 'AuthorizationHeader', headerValue: opts.authHeader },
   };
   const triggers: ExtensionTrigger[] = [
@@ -70,11 +70,24 @@ export async function ensureOrderCheckExtension(
   logger.info(`Updated API Extension ${ORDER_CHECK_EXTENSION_KEY}`);
 }
 
-export async function removeOrderCheckExtension(client: ByProjectKeyRequestBuilder, logger: Logger): Promise<void> {
+/**
+ * Removes the extension. With `ownServiceUrl` (an undeploying deployment) only while it still points at
+ * that deployment: a redeploy registers the new deployment first and undeploys the old one after, so
+ * the old one must not take the new one's extension with it.
+ */
+export async function removeOrderCheckExtension(
+  client: ByProjectKeyRequestBuilder,
+  logger: Logger,
+  ownServiceUrl?: string,
+): Promise<void> {
   const existing = await getOr404(() =>
     client.extensions().withKey({ key: ORDER_CHECK_EXTENSION_KEY }).get().execute(),
   );
   if (!existing) {
+    return;
+  }
+  if (ownServiceUrl !== undefined && destinationUrl(existing.destination) !== orderCheckUrl(ownServiceUrl)) {
+    logger.info(`API Extension ${ORDER_CHECK_EXTENSION_KEY} belongs to another deployment - left in place`);
     return;
   }
   await client
@@ -84,3 +97,8 @@ export async function removeOrderCheckExtension(client: ByProjectKeyRequestBuild
     .execute();
   logger.info(`Removed API Extension ${ORDER_CHECK_EXTENSION_KEY}`);
 }
+
+const orderCheckUrl = (serviceUrl: string): string => `${serviceUrl.replace(/\/+$/, '')}/order-check`;
+
+const destinationUrl = (destination: ExtensionDestination): string | undefined =>
+  destination.type === 'HTTP' ? destination.url : undefined;

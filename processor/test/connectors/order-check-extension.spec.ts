@@ -117,6 +117,55 @@ describe('order-check-extension', () => {
     await expect(removeOrderCheckExtension(client(), silent)).resolves.toBeUndefined();
   });
 
+  /**
+   * A redeploy (`just retunnel`) creates the new deployment first - its post-deploy points the
+   * extension at itself - and only then undeploys the old one. The old one's pre-undeploy must not
+   * take the new deployment's extension with it (seen on sandbox 13: orders went through unchecked).
+   */
+  test('an undeploying deployment leaves an extension that points at another deployment', async () => {
+    const deleted: string[] = [];
+    server.use(
+      http.get(EXTENSION, () =>
+        HttpResponse.json({
+          id: 'ext',
+          version: 3,
+          key: ORDER_CHECK_EXTENSION_KEY,
+          destination: { type: 'HTTP', url: 'https://new-service.connect.test/order-check' },
+        }),
+      ),
+      http.delete(EXTENSION, () => {
+        deleted.push('deleted');
+        return HttpResponse.json({ id: 'ext', version: 3 });
+      }),
+    );
+
+    await removeOrderCheckExtension(client(), silent, 'https://old-service.connect.test/');
+
+    expect(deleted).toStrictEqual([]);
+  });
+
+  test('an undeploying deployment removes its own extension', async () => {
+    const deleted: string[] = [];
+    server.use(
+      http.get(EXTENSION, () =>
+        HttpResponse.json({
+          id: 'ext',
+          version: 3,
+          key: ORDER_CHECK_EXTENSION_KEY,
+          destination: { type: 'HTTP', url: 'https://old-service.connect.test/order-check' },
+        }),
+      ),
+      http.delete(EXTENSION, () => {
+        deleted.push('deleted');
+        return HttpResponse.json({ id: 'ext', version: 3 });
+      }),
+    );
+
+    await removeOrderCheckExtension(client(), silent, 'https://old-service.connect.test/');
+
+    expect(deleted).toStrictEqual(['deleted']);
+  });
+
   test.each([
     [{ serviceUrl: '' }, 'CONNECT_SERVICE_URL'],
     [{ authHeader: '' }, 'ORDER_CHECK_AUTH_HEADER'],
