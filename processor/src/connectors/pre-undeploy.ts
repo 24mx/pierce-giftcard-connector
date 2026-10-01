@@ -1,9 +1,15 @@
+import { paymentSDK } from '../payment-sdk';
+import { removeOrderCheckExtension } from './order-check-extension';
+
 /**
- * Deliberately a no-op. The cart Type and the denomination CartDiscounts stay behind on undeploy:
- * orders already carry references to them, and a redeploy converges onto the same objects anyway.
+ * Removes the order-check API Extension: left behind, commercetools would keep calling a processor that
+ * no longer exists and every order with points would fail. The cart Type and the denomination
+ * CartDiscounts stay - orders already reference them, and a redeploy converges onto the same objects.
  */
 async function preUndeploy() {
-  // Nothing to tear down.
+  await removeOrderCheckExtension(paymentSDK.ctAPI.client, {
+    info: (message: string) => process.stdout.write(`${message}\n`),
+  });
 }
 
 async function run() {

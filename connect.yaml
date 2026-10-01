@@ -68,6 +68,22 @@ deployAs:
           description: Prefix of the denomination discounts' sortOrder (index appended); keep below every marketing promotion
           required: false
           default: "0.000001"
+        - key: BRIQPAY_SYNCED_PAYLOAD_HASH_FIELD
+          description: Cart custom field the Briqpay connector writes with the hash of what Briqpay accepted (its BRIQPAY_SYNCED_PAYLOAD_HASH_KEY)
+          required: false
+          default: briqpay-synced-payload-hash
+        - key: LOYALTY_SYNC_HASH_FIELD
+          description: Cart custom field recording the Briqpay hash at the last points change seen by Briqpay; the loyalty backend must write the same name
+          required: false
+          default: loyaltySyncHash
+        - key: LOYALTY_SYNC_POINTS_FIELD
+          description: Cart custom field recording the points amount Briqpay saw at that hash; the loyalty backend must write the same name
+          required: false
+          default: loyaltySyncPoints
+        - key: ORDER_CHECK_ENABLED
+          description: "true registers the Order-create API Extension that refuses an order whose points changed after the shopper pressed pay; anything else removes it"
+          required: false
+          default: "false"
       securedConfiguration:
         - key: CTP_CLIENT_SECRET
           description: commercetools client secret
@@ -75,3 +91,6 @@ deployAs:
         - key: LOYALTY_API_KEY
           description: Shared secret sent as the X-Api-Key header on every call to the loyalty backend
           required: true
+        - key: ORDER_CHECK_AUTH_HEADER
+          description: Authorization header value commercetools sends to the order-check API Extension; required when ORDER_CHECK_ENABLED is true
+          required: false

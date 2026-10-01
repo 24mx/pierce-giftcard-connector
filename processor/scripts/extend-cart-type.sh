@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Adds the two loyalty fields to an existing commercetools cart/order Type, idempotently:
+# Adds the loyalty fields to an existing commercetools cart/order Type, idempotently:
 # loyaltyRedemptionId (String) and loyaltyRedemption (Set<String>), the fields whose values unlock
-# the loyalty-D* CartDiscounts. A cart can carry only one custom Type, and the storefront already
+# the loyalty-D* CartDiscounts, and the order-check sync record loyaltySyncHash (String) and
+# loyaltySyncPoints (Number). A cart can carry only one custom Type, and the storefront already
 # puts its own Type (key `ingrid-session`, shared with the Briqpay connector's fields) on every
 # cart, so the loyalty fields must live on that Type rather than on the connector's default
 # `pierce-loyalty-cart`.
@@ -15,7 +16,8 @@
 #
 # Usage: processor/scripts/extend-cart-type.sh <path to processor/.env> [type key, default ingrid-session]
 # The .env must provide CTP_PROJECT_KEY, CTP_CLIENT_ID, CTP_CLIENT_SECRET, CTP_AUTH_URL, CTP_API_URL;
-# LOYALTY_REDEMPTION_ID_FIELD / LOYALTY_DENOMINATIONS_FIELD override the field names like the connector.
+# LOYALTY_REDEMPTION_ID_FIELD / LOYALTY_DENOMINATIONS_FIELD / LOYALTY_SYNC_HASH_FIELD /
+# LOYALTY_SYNC_POINTS_FIELD override the field names like the connector.
 set -euo pipefail
 
 ENV_FILE="${1:?path to processor/.env}"
@@ -28,6 +30,8 @@ set +a
 
 ID_FIELD="${LOYALTY_REDEMPTION_ID_FIELD:-loyaltyRedemptionId}"
 SET_FIELD="${LOYALTY_DENOMINATIONS_FIELD:-loyaltyRedemption}"
+SYNC_HASH_FIELD="${LOYALTY_SYNC_HASH_FIELD:-loyaltySyncHash}"
+SYNC_POINTS_FIELD="${LOYALTY_SYNC_POINTS_FIELD:-loyaltySyncPoints}"
 
 token="$(curl -sf -u "$CTP_CLIENT_ID:$CTP_CLIENT_SECRET" -X POST \
   "$CTP_AUTH_URL/oauth/token?grant_type=client_credentials" | python3 -c 'import sys,json;print(json.load(sys.stdin)["access_token"])')"
@@ -36,7 +40,7 @@ base="$CTP_API_URL/$CTP_PROJECT_KEY"
 type_json="$(curl -sf -H "Authorization: Bearer $token" "$base/types/key=$TYPE_KEY")"
 
 # Build only the addFieldDefinition actions for fields the Type does not have yet.
-actions="$(ID_FIELD="$ID_FIELD" SET_FIELD="$SET_FIELD" python3 - "$type_json" <<'PY'
+actions="$(ID_FIELD="$ID_FIELD" SET_FIELD="$SET_FIELD" SYNC_HASH_FIELD="$SYNC_HASH_FIELD" SYNC_POINTS_FIELD="$SYNC_POINTS_FIELD" python3 - "$type_json" <<'PY'
 import json, os, sys
 t = json.loads(sys.argv[1])
 present = {f["name"]: f for f in t.get("fieldDefinitions", [])}
@@ -45,6 +49,10 @@ wanted = [
      "type": {"name": "String"}, "inputHint": "SingleLine"},
     {"name": os.environ["SET_FIELD"], "label": {"en": "Loyalty discount denominations"}, "required": False,
      "type": {"name": "Set", "elementType": {"name": "String"}}},
+    {"name": os.environ["SYNC_HASH_FIELD"], "label": {"en": "Loyalty: Briqpay hash at the last points change Briqpay saw"},
+     "required": False, "type": {"name": "String"}, "inputHint": "SingleLine"},
+    {"name": os.environ["SYNC_POINTS_FIELD"], "label": {"en": "Loyalty: points Briqpay saw at that hash"},
+     "required": False, "type": {"name": "Number"}},
 ]
 actions = []
 for f in wanted:
@@ -58,7 +66,7 @@ PY
 )"
 
 if [ "$(printf '%s' "$actions" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)["actions"]))')" = "0" ]; then
-  echo "Type $TYPE_KEY already has $ID_FIELD and $SET_FIELD - nothing to do"
+  echo "Type $TYPE_KEY already has all loyalty fields - nothing to do"
   exit 0
 fi
 

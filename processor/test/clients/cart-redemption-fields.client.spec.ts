@@ -13,6 +13,9 @@ const OPTS = {
   typeKey: 'pierce-loyalty-cart',
   redemptionIdField: 'loyaltyRedemptionId',
   denominationsField: 'loyaltyRedemption',
+  briqpayHashField: 'briqpay-synced-payload-hash',
+  syncHashField: 'loyaltySyncHash',
+  syncPointsField: 'loyaltySyncPoints',
 };
 
 // ts-client captures `fetch` when the client is built, which would be before msw patches it; a
@@ -82,7 +85,7 @@ describe('cart-redemption-fields.client', () => {
         {
           action: 'setCustomType',
           type: { typeId: 'type', key: 'pierce-loyalty-cart' },
-          fields: { loyaltyRedemptionId: 'red-1', loyaltyRedemption: ['D1024', 'D2'] },
+          fields: { loyaltyRedemptionId: 'red-1', loyaltyRedemption: ['D1024', 'D2'], loyaltySyncPoints: 0 },
         },
       ],
     });
@@ -108,6 +111,8 @@ describe('cart-redemption-fields.client', () => {
       actions: [
         { action: 'setCustomField', name: 'loyaltyRedemptionId', value: 'red-1' },
         { action: 'setCustomField', name: 'loyaltyRedemption', value: ['D1'] },
+        { action: 'setCustomField', name: 'loyaltySyncHash' },
+        { action: 'setCustomField', name: 'loyaltySyncPoints', value: 0 },
       ],
     });
   });
@@ -231,7 +236,86 @@ describe('cart-redemption-fields.client', () => {
       actions: [
         { action: 'setCustomField', name: 'loyaltyRedemptionId' },
         { action: 'setCustomField', name: 'loyaltyRedemption' },
+        { action: 'setCustomField', name: 'loyaltySyncHash' },
+        { action: 'setCustomField', name: 'loyaltySyncPoints', value: 1 },
       ],
+    });
+  });
+
+  describe('sync record (what Briqpay last saw)', () => {
+    const postedActions = async (cart: ReturnType<typeof getCartWithCustomerEmail>, run: () => Promise<unknown>) => {
+      let body: { actions: unknown[] } | undefined;
+      server.use(
+        http.post(`${API}/${PROJECT}/carts/${cart.id}`, async ({ request }) => {
+          body = (await request.json()) as { actions: unknown[] };
+          return HttpResponse.json({ ...cart, version: cart.version + 1 });
+        }),
+      );
+      await run();
+      return body?.actions;
+    };
+
+    test('records the current Briqpay hash with the points before the change once Briqpay synced', async () => {
+      const cart = getCartWithCustomerEmail('a@b.c', {
+        version: 3,
+        custom: {
+          type: { typeId: 'type', id: 'type-id' },
+          fields: { 'briqpay-synced-payload-hash': 'h2', loyaltySyncHash: 'h1', loyaltySyncPoints: 1500 },
+        },
+      });
+
+      const actions = await postedActions(cart, () =>
+        client.write(cart, { redemptionId: 'red-1', denominations: ['D1'] }),
+      );
+
+      expect(actions).toStrictEqual([
+        { action: 'setCustomField', name: 'loyaltyRedemptionId', value: 'red-1' },
+        { action: 'setCustomField', name: 'loyaltyRedemption', value: ['D1'] },
+        { action: 'setCustomField', name: 'loyaltySyncHash', value: 'h2' },
+        { action: 'setCustomField', name: 'loyaltySyncPoints', value: 0 },
+      ]);
+    });
+
+    test('keeps the record when Briqpay has not synced since the last change', async () => {
+      const cart = getCartWithCustomerEmail('a@b.c', {
+        version: 3,
+        custom: {
+          type: { typeId: 'type', id: 'type-id' },
+          fields: { 'briqpay-synced-payload-hash': 'h1', loyaltySyncHash: 'h1', loyaltySyncPoints: 1500 },
+        },
+      });
+
+      const actions = await postedActions(cart, () =>
+        client.write(cart, { redemptionId: 'red-1', denominations: ['D1'] }),
+      );
+
+      expect(actions).toStrictEqual([
+        { action: 'setCustomField', name: 'loyaltyRedemptionId', value: 'red-1' },
+        { action: 'setCustomField', name: 'loyaltyRedemption', value: ['D1'] },
+      ]);
+    });
+
+    test('clear records the points being removed', async () => {
+      const cart = getCartWithCustomerEmail('a@b.c', {
+        version: 3,
+        custom: {
+          type: { typeId: 'type', id: 'type-id' },
+          fields: {
+            'briqpay-synced-payload-hash': 'h1',
+            loyaltyRedemptionId: 'red-1',
+            loyaltyRedemption: ['D1024', 'D2'],
+          },
+        },
+      });
+
+      const actions = await postedActions(cart, () => client.clear(cart, 'red-1'));
+
+      expect(actions).toStrictEqual([
+        { action: 'setCustomField', name: 'loyaltyRedemptionId' },
+        { action: 'setCustomField', name: 'loyaltyRedemption' },
+        { action: 'setCustomField', name: 'loyaltySyncHash', value: 'h1' },
+        { action: 'setCustomField', name: 'loyaltySyncPoints', value: 1026 },
+      ]);
     });
   });
 });

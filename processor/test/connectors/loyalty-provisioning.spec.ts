@@ -14,6 +14,8 @@ const OPTS = {
   typeKey: 'pierce-loyalty-cart',
   redemptionIdField: 'loyaltyRedemptionId',
   denominationsField: 'loyaltyRedemption',
+  syncHashField: 'loyaltySyncHash',
+  syncPointsField: 'loyaltySyncPoints',
   discountKeyPrefix: 'loyalty-',
   stores: [
     { storeKey: 'lu', currency: 'EUR', levels: 18 },
@@ -49,6 +51,8 @@ const convergedType = () => ({
   fieldDefinitions: [
     { name: 'loyaltyRedemptionId', type: { name: 'String' } },
     { name: 'loyaltyRedemption', type: { name: 'Set', elementType: { name: 'String' } } },
+    { name: 'loyaltySyncHash', type: { name: 'String' } },
+    { name: 'loyaltySyncPoints', type: { name: 'Number' } },
   ],
 });
 
@@ -155,6 +159,8 @@ describe('loyalty-provisioning', () => {
           fieldDefinitions: [
             { name: 'loyaltyRedemptionId', type: { name: 'String' } },
             { name: 'loyaltyRedemption', type: { name: 'Set', elementType: { name: 'String' } } },
+            { name: 'loyaltySyncHash', type: { name: 'String' } },
+            { name: 'loyaltySyncPoints', type: { name: 'Number' } },
           ],
         }),
       ),
@@ -255,6 +261,38 @@ describe('loyalty-provisioning', () => {
     ]);
   });
 
+  test('adds the order-check sync record fields to a type that predates them', async () => {
+    let typeUpdate: Record<string, unknown> | undefined;
+    const singleStoreOpts = { ...OPTS, stores: [] };
+    server.use(
+      http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () =>
+        HttpResponse.json({
+          id: 'type-id',
+          version: 4,
+          key: OPTS.typeKey,
+          fieldDefinitions: [
+            { name: 'loyaltyRedemptionId', type: { name: 'String' } },
+            { name: 'loyaltyRedemption', type: { name: 'Set', elementType: { name: 'String' } } },
+          ],
+        }),
+      ),
+      http.post(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, async ({ request }) => {
+        typeUpdate = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: 'type-id', version: 5, key: OPTS.typeKey });
+      }),
+    );
+
+    await provisionLoyaltyRedemption(client(), singleStoreOpts, silent);
+
+    expect(typeUpdate).toMatchObject({
+      version: 4,
+      actions: [
+        { action: 'addFieldDefinition', fieldDefinition: { name: 'loyaltySyncHash', type: { name: 'String' } } },
+        { action: 'addFieldDefinition', fieldDefinition: { name: 'loyaltySyncPoints', type: { name: 'Number' } } },
+      ],
+    });
+  });
+
   test('fails loudly when an existing type defines a field with the wrong type', async () => {
     server.use(
       http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () =>
@@ -285,6 +323,8 @@ describe('loyalty-provisioning', () => {
           fieldDefinitions: [
             { name: 'loyaltyRedemptionId', type: { name: 'String' } },
             { name: 'loyaltyRedemption', type: { name: 'Set', elementType: { name: 'String' } } },
+            { name: 'loyaltySyncHash', type: { name: 'String' } },
+            { name: 'loyaltySyncPoints', type: { name: 'Number' } },
           ],
         }),
       ),
