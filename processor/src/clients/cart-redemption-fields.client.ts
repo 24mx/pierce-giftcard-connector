@@ -129,12 +129,15 @@ export class CommercetoolsCartRedemptionFieldsClient implements CartRedemptionFi
     if (next === null) {
       return [];
     }
-    return [
-      next.hash === null
-        ? { action: 'setCustomField', name: this.opts.syncHashField }
-        : { action: 'setCustomField', name: this.opts.syncHashField, value: next.hash },
-      { action: 'setCustomField', name: this.opts.syncPointsField, value: next.points },
-    ];
+    const points: CartUpdateAction = { action: 'setCustomField', name: this.opts.syncPointsField, value: next.points };
+    if (next.hash !== null) {
+      return [{ action: 'setCustomField', name: this.opts.syncHashField, value: next.hash }, points];
+    }
+    // commercetools refuses to remove a field the cart does not carry, so only a present hash is unset.
+    if (this.opts.syncHashField in fields) {
+      return [{ action: 'setCustomField', name: this.opts.syncHashField }, points];
+    }
+    return [points];
   }
 
   /**
