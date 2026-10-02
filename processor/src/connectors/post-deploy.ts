@@ -1,14 +1,13 @@
 import { paymentSDK } from '../payment-sdk';
 import { getConfig } from '../config/config';
 import { provisionLoyaltyRedemption } from './loyalty-provisioning';
-import { ensureOrderCheckExtension } from './order-check-extension';
+import { removeRetiredOrderCheck } from './retired-order-check';
 
 /**
  * Connect runs this once per deployment. It converges every configured store onto what the
- * redemption needs there - the shared cart Type with the redemption fields and the sync record, and that store's own
+ * redemption needs there - the shared cart Type with the two custom fields, and that store's own
  * scoped set of denomination CartDiscounts - and is safe to re-run: existing objects are extended or
- * left alone, never recreated. The order-check API Extension comes last, so its trigger never fires
- * before the cart Type defines the sync record fields it is conditioned on.
+ * left alone, never recreated. It also deletes the order-check API Extension of v0.12.x.
  */
 async function postDeploy() {
   const config = getConfig();
@@ -19,24 +18,13 @@ async function postDeploy() {
       typeKey: config.loyaltyCartTypeKey,
       redemptionIdField: config.loyaltyRedemptionIdField,
       denominationsField: config.loyaltyDenominationsField,
-      syncHashField: config.loyaltySyncHashField,
-      syncPointsField: config.loyaltySyncPointsField,
       discountKeyPrefix: config.loyaltyDiscountKeyPrefix,
       stores: config.loyaltyDiscountStores,
       sortOrderBase: config.loyaltyDiscountSortOrderBase,
     },
     logger,
   );
-  await ensureOrderCheckExtension(
-    paymentSDK.ctAPI.client,
-    {
-      enabled: config.orderCheckEnabled,
-      serviceUrl: config.connectServiceUrl,
-      authHeader: config.orderCheckAuthHeader,
-      syncPointsField: config.loyaltySyncPointsField,
-    },
-    logger,
-  );
+  await removeRetiredOrderCheck(paymentSDK.ctAPI.client, logger);
 }
 
 async function runPostDeployScripts() {

@@ -17,12 +17,6 @@ const env = Object.fromEntries(
     .filter((l) => /^[A-Z_]+=/.test(l))
     .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).replace(/^['"]|['"]$/g, '')]),
 );
-// The order check is switched per deployment, so an exported variable may override processor/.env.
-for (const key of ['ORDER_CHECK_ENABLED', 'ORDER_CHECK_AUTH_HEADER']) {
-  if (process.env[key]) {
-    env[key] = process.env[key];
-  }
-}
 
 const token = await (async () => {
   const res = await fetch(`${env.CTP_AUTH_URL}/oauth/token`, {
@@ -120,10 +114,6 @@ const createDeployment = async (loyaltyUrl) => {
             'LOYALTY_DISCOUNT_KEY_PREFIX',
             'LOYALTY_DISCOUNT_CURRENCIES',
             'LOYALTY_DISCOUNT_SORT_ORDER_BASE',
-            'BRIQPAY_SYNCED_PAYLOAD_HASH_FIELD',
-            'LOYALTY_SYNC_HASH_FIELD',
-            'LOYALTY_SYNC_POINTS_FIELD',
-            'ORDER_CHECK_ENABLED',
           ]
             .filter((key) => env[key])
             .map((key) => ({ key, value: env[key] })),
@@ -131,7 +121,6 @@ const createDeployment = async (loyaltyUrl) => {
         securedConfiguration: [
           { key: 'CTP_CLIENT_SECRET', value: env.CTP_CLIENT_SECRET },
           { key: 'LOYALTY_API_KEY', value: env.LOYALTY_API_KEY },
-          ...(env.ORDER_CHECK_AUTH_HEADER ? [{ key: 'ORDER_CHECK_AUTH_HEADER', value: env.ORDER_CHECK_AUTH_HEADER }] : []),
         ],
       },
       { applicationName: 'enabler' },

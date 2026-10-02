@@ -1,6 +1,4 @@
 import { Cart, CartUpdateAction } from '@commercetools/platform-sdk';
-import { sumDenominations } from '../services/denominations';
-import { nextSyncRecord, SyncRecord } from '../services/points-sync-record';
 import { ByProjectKeyRequestBuilder } from '@commercetools/platform-sdk/dist/declarations/src/generated/client/by-project-key-request-builder';
 
 export type CartRedemptionFields = {
@@ -38,11 +36,6 @@ export type CartRedemptionFieldsOptions = {
   typeKey: string;
   redemptionIdField: string;
   denominationsField: string;
-  /** Written by the Briqpay connector each time Briqpay accepts the cart. */
-  briqpayHashField: string;
-  /** The sync record: which points amount Briqpay saw at which hash (see points-sync-record.ts). */
-  syncHashField: string;
-  syncPointsField: string;
 };
 
 export class CommercetoolsCartRedemptionFieldsClient implements CartRedemptionFieldsClient {
@@ -86,7 +79,6 @@ export class CommercetoolsCartRedemptionFieldsClient implements CartRedemptionFi
         ? [
             { action: 'setCustomField', name: this.opts.redemptionIdField },
             { action: 'setCustomField', name: this.opts.denominationsField },
-            ...this.syncRecordActions(current),
           ]
         : [],
     );
@@ -99,45 +91,12 @@ export class CommercetoolsCartRedemptionFieldsClient implements CartRedemptionFi
       [this.opts.denominationsField]: fields.denominations,
     };
     if (!cart.custom) {
-      // No custom type means no Briqpay hash yet, so the record starts empty.
-      return [
-        {
-          action: 'setCustomType',
-          type: { typeId: 'type', key: this.opts.typeKey },
-          fields: { ...values, [this.opts.syncPointsField]: 0 },
-        },
-      ];
+      return [{ action: 'setCustomType', type: { typeId: 'type', key: this.opts.typeKey }, fields: values }];
     }
     return [
       { action: 'setCustomField', name: this.opts.redemptionIdField, value: fields.redemptionId },
       { action: 'setCustomField', name: this.opts.denominationsField, value: fields.denominations },
-      ...this.syncRecordActions(cart),
     ];
-  }
-
-  /**
-   * Goes in the same update as every points change, so the record and the change land together or not
-   * at all; a version-conflict retry recomputes it from the fresh cart.
-   */
-  private syncRecordActions(cart: Cart): CartUpdateAction[] {
-    const fields = cart.custom?.fields ?? {};
-    const next = nextSyncRecord(
-      readSyncRecord(fields, this.opts),
-      stringOrNull(fields[this.opts.briqpayHashField]),
-      sumDenominations(this.read(cart).denominations),
-    );
-    if (next === null) {
-      return [];
-    }
-    const points: CartUpdateAction = { action: 'setCustomField', name: this.opts.syncPointsField, value: next.points };
-    if (next.hash !== null) {
-      return [{ action: 'setCustomField', name: this.opts.syncHashField, value: next.hash }, points];
-    }
-    // commercetools refuses to remove a field the cart does not carry, so only a present hash is unset.
-    if (this.opts.syncHashField in fields) {
-      return [{ action: 'setCustomField', name: this.opts.syncHashField }, points];
-    }
-    return [points];
   }
 
   /**
@@ -169,20 +128,6 @@ export class CommercetoolsCartRedemptionFieldsClient implements CartRedemptionFi
     return response.body;
   }
 }
-
-/** The record on a cart or order, or null when no points change has written one yet. */
-export const readSyncRecord = (
-  fields: Record<string, unknown>,
-  opts: Pick<CartRedemptionFieldsOptions, 'syncHashField' | 'syncPointsField'>,
-): SyncRecord | null => {
-  const points = fields[opts.syncPointsField];
-  if (typeof points !== 'number') {
-    return null;
-  }
-  return { hash: stringOrNull(fields[opts.syncHashField]), points };
-};
-
-const stringOrNull = (value: unknown): string | null => (typeof value === 'string' && value.length > 0 ? value : null);
 
 const isVersionConflict = (e: unknown): boolean =>
   typeof e === 'object' && e !== null && 'statusCode' in e && (e as { statusCode: unknown }).statusCode === 409;

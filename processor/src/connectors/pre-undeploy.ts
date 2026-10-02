@@ -1,19 +1,9 @@
-import { paymentSDK } from '../payment-sdk';
-import { getConfig } from '../config/config';
-import { removeOrderCheckExtension } from './order-check-extension';
-
 /**
- * Removes the order-check API Extension while it points at this deployment: left behind, commercetools
- * would keep calling a processor that no longer exists and every order with points would fail. One
- * that a newer deployment already re-pointed at itself stays. The cart Type and the denomination
- * CartDiscounts stay - orders already reference them, and a redeploy converges onto the same objects.
+ * Deliberately a no-op. The cart Type and the denomination CartDiscounts stay behind on undeploy:
+ * orders already carry references to them, and a redeploy converges onto the same objects anyway.
  */
 async function preUndeploy() {
-  await removeOrderCheckExtension(
-    paymentSDK.ctAPI.client,
-    { info: (message: string) => process.stdout.write(`${message}\n`) },
-    getConfig().connectServiceUrl,
-  );
+  // Nothing to tear down.
 }
 
 async function run() {

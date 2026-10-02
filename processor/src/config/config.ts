@@ -67,20 +67,6 @@ export const config = {
   loyaltyCartTypeKey: process.env.LOYALTY_CART_TYPE_KEY || 'pierce-loyalty-cart',
   loyaltyRedemptionIdField: process.env.LOYALTY_REDEMPTION_ID_FIELD || 'loyaltyRedemptionId',
   loyaltyDenominationsField: process.env.LOYALTY_DENOMINATIONS_FIELD || 'loyaltyRedemption',
-  // The order check (points changed after the shopper pressed pay). The Briqpay connector writes a hash
-  // of what Briqpay accepted onto the cart; every points change records which points amount Briqpay saw
-  // at that hash (loyaltySyncHash + loyaltySyncPoints, also written by the loyalty backend on release),
-  // and the Order-create API Extension compares that record with the order.
-  briqpaySyncedPayloadHashField: process.env.BRIQPAY_SYNCED_PAYLOAD_HASH_FIELD || 'briqpay-synced-payload-hash',
-  loyaltySyncHashField: process.env.LOYALTY_SYNC_HASH_FIELD || 'loyaltySyncHash',
-  loyaltySyncPointsField: process.env.LOYALTY_SYNC_POINTS_FIELD || 'loyaltySyncPoints',
-  // Registers the API Extension on post-deploy (and removes it when false). The fields above are written
-  // regardless, so turning the check on later needs no data migration.
-  orderCheckEnabled: process.env.ORDER_CHECK_ENABLED === 'true',
-  // The Authorization header value commercetools sends with every extension call.
-  orderCheckAuthHeader: process.env.ORDER_CHECK_AUTH_HEADER || '',
-  // Set by Connect for a service application; the extension's destination.
-  connectServiceUrl: process.env.CONNECT_SERVICE_URL || '',
   // The automatic CartDiscounts that carry the points: loyalty-<storeKey>-D1 … loyalty-<storeKey>-D2^(levels-1),
   // scoped to that Store so each set lives inside the Store's own 100-active-automatic-discount budget
   // instead of the project-wide one (SUPPORT-41640 confirms the cap is project-wide + 100 per Store).

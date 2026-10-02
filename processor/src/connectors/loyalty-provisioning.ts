@@ -20,8 +20,6 @@ export type ProvisioningOptions = {
   typeKey: string;
   redemptionIdField: string;
   denominationsField: string;
-  syncHashField: string;
-  syncPointsField: string;
   discountKeyPrefix: string;
   stores: ProvisioningStore[];
   sortOrderBase: string;
@@ -30,8 +28,8 @@ export type ProvisioningOptions = {
 type Logger = { info(message: string): void };
 
 /**
- * Idempotent set-up of everything the redemption needs in commercetools: the cart Type with the
- * redemption fields and the order-check sync record, and one absolute automatic CartDiscount per denomination PER STORE, gated by
+ * Idempotent set-up of everything the redemption needs in commercetools: the cart Type with the two
+ * fields, and one absolute automatic CartDiscount per denomination PER STORE, gated by
  * `custom.<denominationsField> contains "Dn"` and scoped to that store via `stores`. Store-scoping
  * keeps every store's set inside its OWN 100-active-automatic-discount budget instead of the
  * project-wide one, which a live check against pierce-prod found already at 90/100 from unrelated
@@ -75,19 +73,6 @@ const fieldDefinitions = (opts: ProvisioningOptions): FieldDefinition[] => [
     label: { en: 'Loyalty discount denominations' },
     required: false,
     type: { name: 'Set', elementType: { name: 'String' } },
-  },
-  {
-    name: opts.syncHashField,
-    label: { en: 'Loyalty: Briqpay hash at the last points change Briqpay saw' },
-    required: false,
-    type: { name: 'String' },
-    inputHint: 'SingleLine',
-  },
-  {
-    name: opts.syncPointsField,
-    label: { en: 'Loyalty: points Briqpay saw at that hash' },
-    required: false,
-    type: { name: 'Number' },
   },
 ];
 
@@ -243,7 +228,7 @@ const sameMoney = (existing: CartDiscount, wanted: CartDiscountValueAbsoluteDraf
   return have.length === want.length && have.every((entry, i) => entry === want[i]);
 };
 
-export async function getOr404<T>(call: () => Promise<{ body: T }>): Promise<T | null> {
+async function getOr404<T>(call: () => Promise<{ body: T }>): Promise<T | null> {
   try {
     return (await call()).body;
   } catch (e) {
