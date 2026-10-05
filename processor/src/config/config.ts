@@ -59,6 +59,9 @@ export const config = {
   loyaltyTimeoutMs: parseInt(process.env.LOYALTY_TIMEOUT_MS || '5000'),
   // Shared secret for /loyalty/**. Empty means the backend is unsecured - fine on a laptop only.
   loyaltyApiKey: process.env.LOYALTY_API_KEY || '',
+  // Cloudflare Access service token for the backend's public hostname. Empty means no Cloudflare in front.
+  loyaltyAccessClientId: process.env.LOYALTY_CF_ACCESS_CLIENT_ID || '',
+  loyaltyAccessClientSecret: process.env.LOYALTY_CF_ACCESS_CLIENT_SECRET || '',
 
   // The redemption's projection onto the commercetools cart. The loyalty backend reads the same field
   // names off the order (loyalty.redemption.commercetools.* in pierce-loyalty), so the two deployments

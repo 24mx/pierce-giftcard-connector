@@ -75,3 +75,9 @@ deployAs:
         - key: LOYALTY_API_KEY
           description: Shared secret sent as the X-Api-Key header on every call to the loyalty backend
           required: true
+        - key: LOYALTY_CF_ACCESS_CLIENT_ID
+          description: Cloudflare Access service token client ID for the loyalty backend's public hostname (CF-Access-Client-Id header)
+          required: false
+        - key: LOYALTY_CF_ACCESS_CLIENT_SECRET
+          description: Cloudflare Access service token client secret for the loyalty backend's public hostname (CF-Access-Client-Secret header)
+          required: false
