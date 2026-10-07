@@ -53,25 +53,8 @@ Levels needed always round up to `⌈log2(minor_units_needed + 1)⌉`; a currenc
 
 **Why per-Store, not one shared multi-currency set:** a live check against `pierce-prod` found 90 of the project's 91 active automatic discounts already global (project-wide), leaving ~10 of the documented 100-discount cap. A shared global set covering many currencies would compete for that same, nearly-exhausted budget. Each commercetools Store has its own independent 100-cap, so provisioning each store's denominations scoped to that store avoids the problem entirely, and lets each store carry exactly the level count its own currency needs.
 
-## 4. A possible simplification: the 100-point step
+## 4. Ruled out: bucketing by a 100-point step
 
-`pierce-loyalty`'s `RedemptionHoldService` already redeems in **fixed steps of 100 points** (`MAX_POINTS_STEP`) — a documented, existing constraint: *"the storefront's points selector redeems in fixed steps of 100... a native `<input type="range">` can only ever reach a `max` that is itself a multiple of its step."* Since 100 points = exactly €1, every real redemption request is therefore already a whole multiple of "one step" — never a fractional one.
+An earlier draft proposed sizing the buckets in steps of 100 points (= €1) instead of raw minor units, which would have needed the same 12 levels in every currency. That rested on `pierce-loyalty`'s quote flooring the redeemable cap to multiples of 100 (`MAX_POINTS_STEP`) and on the storefront slider moving in steps of 100.
 
-**If — and only if — this is confirmed as a hard, backend-enforced invariant** (not only a storefront UI nicety an API caller could bypass), the buckets can represent **steps** instead of raw minor units. A step's size in a given currency is `round(rateToEur(currency) × 100)` minor units — the money value of 100 points in that currency. Because every redemption is a whole number of steps, the number of levels needed becomes **the same in every currency**, since it is now counting steps (a currency-independent quantity), not minor units:
-
-| Currency | Step size (100 pts, minor units) | Levels for ~2,621 steps |
-|---|---:|---:|
-| EUR | 100 | **12** |
-| RON | 497 | **12** |
-| SEK | 1,150 | **12** |
-| CZK | 2,530 | **12** |
-| HUF | 39,000 | **12** |
-
-Twelve levels reach `2^12 − 1 = 4,095` steps in every currency — more headroom than today's 18-level EUR ceiling, using fewer objects everywhere. Unlike an arbitrary rounding "quantum," this introduces **no precision loss**: a customer physically cannot request an amount that isn't a whole number of steps, so there is nothing to round away.
-
-**What this requires before it can be built:**
-1. Product/business confirmation that the 100-point step is permanent system behavior, not just today's UI choice.
-2. `pierce-loyalty`'s `/hold` (or whatever computes the redeem amount) must derive that amount as `steps × step_unit(currency)` using the *same* `step_unit` constant the connector's buckets are built from — not an independent `points × rate` calculation each time, which could drift from the bucket values by a minor unit or two at large step counts due to compounding rounding.
-3. `/hold` should reject any amount that is not an exact multiple of the configured step, closing the loophole where a non-slider caller (a test, a future API integration) could request an amount the bucket system cannot represent.
-
-This plan deliberately ships the **full-precision** (raw minor unit) version first — §3's table — and treats §4 as a follow-up simplification once (1) is confirmed.
+Neither holds any more (PITP-7589): the storefront slider moves **one point at a time** (`POINTS_STEP = 1` in `ecom-fe-sveltekit`'s `points-split.ts`) and the backend quote no longer floors the cap. A redemption can therefore be any whole number of points — any amount of EUR cents — so a step-sized bucket could not represent it. The **full-precision** (raw minor unit) buckets of §3 are the design, not an interim version: D1 and D2 are now used by EUR carts as well, not only after FX conversion.
