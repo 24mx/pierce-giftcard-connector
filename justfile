@@ -167,6 +167,13 @@ e2e url=processor_url:
 # -> rebuild. `just release vX.Y.Z` does every step after the commit; `just redeploy` then restarts
 # the running deployment on the new build.
 
+# Which environment the connector recipes act on: unset is the sandbox (processor/.env), anything
+# else reads processor/.env.<name> -- its project, API client and CONNECTOR_KEY. Pick it per call:
+#   just CONNECT_ENV=test1 connector-status
+#   just CONNECT_ENV=test1 release v0.14.0
+#   just CONNECT_ENV=test1 deploy          (LOYALTY_API_URL comes from processor/.env.test1)
+export CONNECT_ENV := env("CONNECT_ENV", "")
+
 # The remote Connect reads: the tag has to exist there, under the URL the connector draft names.
 # `just connector-status` prints that URL — this remote must be the one pointing at it.
 public_remote := "origin"
@@ -204,9 +211,10 @@ connector-publish:
     node scripts/ct-connector.mjs publish
 
 # Pass the public address of the loyalty backend — `just funnel-url` or the ngrok domain. A
-# deployment cannot reach localhost. Every other value comes from processor/.env.
+# deployment cannot reach localhost. Without it, LOYALTY_API_URL of the env file is used; every
+# other value comes from that file too.
 # Create this connector's deployment in the project.
-deploy tunnel_url:
+deploy tunnel_url="":
     node scripts/ct-connector.mjs deploy {{tunnel_url}}
 
 # Rebuild the draft without cutting a tag — for retrying a failed build.
@@ -225,7 +233,7 @@ redeploy:
 # Both `just funnel` and `just ngrok` hold their address permanently, so this should be a one-time
 # cost — needing it twice for the same machine means the address moved and something is wrong.
 # Move the whole stack onto a new tunnel URL.
-retunnel tunnel_url:
+retunnel tunnel_url="":
     node scripts/ct-connector.mjs retunnel {{tunnel_url}}
 
 # Stands in for the Kafka consumer. Tops the demo user up if the ledger is short, and asserts.

@@ -4,12 +4,29 @@
 // every change reaches CT the same way: commit, tag, push, repoint the draft, rebuild. The `release`
 // recipe in the justfile chains exactly that; the subcommands here are the individual steps.
 //
-// Usage: node scripts/ct-connector.mjs <command> [args]
-import { readFileSync } from 'node:fs';
+// Usage: [CONNECT_ENV=<name>] node scripts/ct-connector.mjs <command> [args]
+//
+// CONNECT_ENV picks the target: unset reads processor/.env (the sandbox), `test1` reads
+// processor/.env.test1, and so on. Each file names its own project, API client and, through
+// CONNECTOR_KEY, its own connector draft -- a draft lives in one organization and lists the
+// projects allowed to deploy it, so the sandbox and pierce-test1 each have their own.
+//
+// Two API clients, each taken from the env file when it sets them, otherwise from the macOS Keychain
+// (account = client id, password = client secret; only for a named CONNECT_ENV):
+//   this script's own, for Connect and Checkout   DEPLOY_CLIENT_ID/SECRET  or  pierce-deploy-connector-<env>
+//   the deployment's CTP_CLIENT_ID/SECRET          CTP_CLIENT_ID/SECRET     or  pierce-loyalty-giftcard-<env>
+// With neither, the script's client falls back to the deployment's one, which is how the sandbox runs.
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 
-const CONNECTOR_KEY = 'pierce-loyalty-giftcard';
 const CONNECT_URL = 'https://connect.europe-west1.gcp.commercetools.com';
-const ENV_FILE = 'processor/.env';
+const CONNECT_ENV = process.env.CONNECT_ENV || '';
+const ENV_FILE = CONNECT_ENV ? `processor/.env.${CONNECT_ENV}` : 'processor/.env';
+
+if (!existsSync(ENV_FILE)) {
+  console.error(`${ENV_FILE} does not exist; copy processor/.env.template and fill it in for ${CONNECT_ENV || 'the sandbox'}`);
+  process.exit(1);
+}
 
 const env = Object.fromEntries(
   readFileSync(ENV_FILE, 'utf8')
@@ -18,11 +35,52 @@ const env = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).replace(/^['"]|['"]$/g, '')]),
 );
 
+const CONNECTOR_KEY = env.CONNECTOR_KEY || 'pierce-loyalty-giftcard';
+
+const keychainClient = (service) => {
+  if (!CONNECT_ENV) {
+    return null;
+  }
+  try {
+    const read = (...extra) => execFileSync('security', ['find-generic-password', '-s', service, ...extra], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const id = read().match(/"acct"<blob>="([^"]*)"/)?.[1];
+    const secret = read('-w').trim();
+    return id && secret ? { id, secret, source: `Keychain ${service}` } : null;
+  } catch {
+    // `security` exits non-zero when the entry does not exist.
+    return null;
+  }
+};
+
+const envClient = (prefix) => (env[`${prefix}_ID`] && env[`${prefix}_SECRET`] ? { id: env[`${prefix}_ID`], secret: env[`${prefix}_SECRET`], source: `${ENV_FILE} ${prefix}_*` } : null);
+
+const clientOrExit = (role, ...candidates) => {
+  const client = candidates.find(Boolean);
+  if (!client) {
+    console.error(`no API client for ${role}: set it in ${ENV_FILE} or add a Keychain entry`);
+    console.error(`  security add-generic-password -s "<entry>" -a "<CLIENT_ID>" -w "<CLIENT_SECRET>" -U`);
+    process.exit(1);
+  }
+  return client;
+};
+
+// Read lazily: only creating a deployment needs it, and status or publish should not demand it.
+const runtimeClient = () => clientOrExit('the deployment (CTP_CLIENT_ID)', envClient('CTP_CLIENT'), keychainClient(`pierce-loyalty-giftcard-${CONNECT_ENV}`));
+const deployClient = clientOrExit(
+  'this script (DEPLOY_CLIENT_ID)',
+  envClient('DEPLOY_CLIENT'),
+  keychainClient(`pierce-deploy-connector-${CONNECT_ENV}`),
+  envClient('CTP_CLIENT'),
+);
+// Every command acts on a real project, so say which one before doing anything.
+console.error(`[${CONNECT_ENV || 'sandbox'}] project=${env.CTP_PROJECT_KEY} connector=${CONNECTOR_KEY} (${ENV_FILE})`);
+console.error(`    script client: ${deployClient.source}`);
+
 const token = await (async () => {
   const res = await fetch(`${env.CTP_AUTH_URL}/oauth/token`, {
     method: 'POST',
     headers: {
-      Authorization: `Basic ${Buffer.from(`${env.CTP_CLIENT_ID}:${env.CTP_CLIENT_SECRET}`).toString('base64')}`,
+      Authorization: `Basic ${Buffer.from(`${deployClient.id}:${deployClient.secret}`).toString('base64')}`,
       'Content-Type': 'application/x-www-form-urlencoded',
     },
     body: new URLSearchParams({ grant_type: 'client_credentials' }),
@@ -83,12 +141,21 @@ const myIntegration = async () =>
   (await checkout('GET', '/payment-integrations')).results?.find((pi) => pi.name === INTEGRATION_NAME);
 
 const createDeployment = async (loyaltyUrl) => {
-  const required = ['CTP_PROJECT_KEY', 'CTP_AUTH_URL', 'CTP_API_URL', 'CTP_SESSION_URL', 'CTP_CLIENT_ID', 'CTP_JWKS_URL', 'CTP_JWT_ISSUER', 'CTP_CLIENT_SECRET', 'LOYALTY_API_KEY'];
+  const required = ['CTP_PROJECT_KEY', 'CTP_AUTH_URL', 'CTP_API_URL', 'CTP_SESSION_URL', 'CTP_JWKS_URL', 'CTP_JWT_ISSUER', 'LOYALTY_API_KEY'];
   const missing = required.filter((key) => !env[key]);
   if (missing.length) {
     console.error(`${ENV_FILE} is missing: ${missing.join(', ')}`);
     process.exit(1);
   }
+  // A deployment's configuration is frozen at creation, so an unfilled "[...]" from the template would
+  // ship as a real value with no way to correct it short of a new deployment.
+  const placeholders = Object.keys(env).filter((key) => /^\[.*\]$/.test(env[key]));
+  if (placeholders.length) {
+    console.error(`${ENV_FILE} still has placeholders: ${placeholders.join(', ')}`);
+    process.exit(1);
+  }
+  const client = runtimeClient();
+  console.log(`deployment client: ${client.source}`);
   return call('POST', `/${env.CTP_PROJECT_KEY}/deployments`, {
     connector: { key: CONNECTOR_KEY },
     region: 'europe-west1.gcp',
@@ -100,7 +167,7 @@ const createDeployment = async (loyaltyUrl) => {
           { key: 'CTP_AUTH_URL', value: env.CTP_AUTH_URL },
           { key: 'CTP_API_URL', value: env.CTP_API_URL },
           { key: 'CTP_SESSION_URL', value: env.CTP_SESSION_URL },
-          { key: 'CTP_CLIENT_ID', value: env.CTP_CLIENT_ID },
+          { key: 'CTP_CLIENT_ID', value: client.id },
           { key: 'CTP_JWKS_URL', value: env.CTP_JWKS_URL },
           { key: 'CTP_JWT_ISSUER', value: env.CTP_JWT_ISSUER },
           { key: 'LOYALTY_API_URL', value: loyaltyUrl.replace(/\/$/, '') },
@@ -112,14 +179,14 @@ const createDeployment = async (loyaltyUrl) => {
             'LOYALTY_REDEMPTION_ID_FIELD',
             'LOYALTY_DENOMINATIONS_FIELD',
             'LOYALTY_DISCOUNT_KEY_PREFIX',
-            'LOYALTY_DISCOUNT_CURRENCIES',
+            'LOYALTY_DISCOUNT_STORES',
             'LOYALTY_DISCOUNT_SORT_ORDER_BASE',
           ]
             .filter((key) => env[key])
             .map((key) => ({ key, value: env[key] })),
         ],
         securedConfiguration: [
-          { key: 'CTP_CLIENT_SECRET', value: env.CTP_CLIENT_SECRET },
+          { key: 'CTP_CLIENT_SECRET', value: client.secret },
           { key: 'LOYALTY_API_KEY', value: env.LOYALTY_API_KEY },
           // Cloudflare Access service token for the backend's public hostname; sent only when set.
           ...['LOYALTY_CF_ACCESS_CLIENT_ID', 'LOYALTY_CF_ACCESS_CLIENT_SECRET']
@@ -146,9 +213,12 @@ const awaitDeployed = async (id) => {
   process.exit(1);
 };
 
-const publicUrlOrExit = (url, verb) => {
+// A tunnel address on the command line wins; otherwise LOYALTY_API_URL of the env file, which for a
+// shared environment such as test1 is the backend's fixed address rather than a tunnel.
+const publicUrlOrExit = (arg, verb) => {
+  const url = arg || env.LOYALTY_API_URL;
   if (!url) {
-    console.error(`usage: ${verb} <public-loyalty-url>    (the address from \`just funnel-url\`)`);
+    console.error(`usage: ${verb} <public-loyalty-url>    (the address from \`just funnel-url\`, or LOYALTY_API_URL in ${ENV_FILE})`);
     process.exit(1);
   }
   if (/localhost|127\.0\.0\.1/.test(url)) {

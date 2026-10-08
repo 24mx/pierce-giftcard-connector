@@ -1,6 +1,9 @@
 # Code Editor directories and files
 .idea
 .env
+# Per-environment connector settings (processor/.env.test1, ...) carry real credentials.
+.env.*
+!.env.template
 # Pierce-internal design notes, deliberately kept out of this repository.
 docs/PIERCE_*.md
 
