@@ -5,12 +5,12 @@
   "main": "dist/server.js",
   "scripts": {
     "start": "node dist/main.js",
-    "start:dev": "node_modules/.bin/nodemon -q dist/main.js",
+    "start:dev": "node --watch dist/main.js",
     "lint": "prettier --check \"**/**/*.{ts,js,json}\" && eslint src test",
     "lint:fix": "prettier --write \"**/**/*.{ts,js,json}\" && eslint --fix src test",
     "build": "rm -rf ./dist && tsc",
     "dev": "ts-node src/main.ts",
-    "watch": "nodemon --watch \"src/**\" --ext \"ts,json,html\" --ignore \"src/**/*.spec.ts\" --exec \"ts-node src/main.ts\"",
+    "watch": "node --watch-path=src --require ts-node/register src/main.ts",
     "test": "jest --detectOpenHandles",
     "test:watch": "jest --watch --detectOpenHandles",
     "test:coverage": "jest --detectOpenHandles --coverage",
@@ -43,7 +43,8 @@
     "brace-expansion@1": "1.1.21",
     "brace-expansion@2": "2.1.7",
     "brace-expansion@3": "3.0.9",
-    "brace-expansion@5": "5.0.12"
+    "brace-expansion@5": "5.0.12",
+    "argparse@1": "2.0.1"
   },
   "devDependencies": {
     "@commercetools/ts-client": "5.0.3",
@@ -63,7 +64,6 @@
     "jest": "30.4.2",
     "msw": "2.15.0",
     "node-fetch": "3.3.2",
-    "nodemon": "3.1.14",
     "prettier": "3.9.6",
     "ts-jest": "29.4.12",
     "ts-node": "10.9.2",
