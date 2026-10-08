@@ -29,6 +29,8 @@ export const LOYALTY_ERROR_KEYS = [
   'RedemptionNotOnCart',
   /** A checkout submission locked the hold; the lock expires on its own. */
   'FinalizationInProgress',
+  /** /redeem named both redeemAmount and redeemPoints; exactly one is allowed. */
+  'InvalidRedeemRequest',
 ] as const;
 
 export type LoyaltyErrorKey = (typeof LOYALTY_ERROR_KEYS)[number];

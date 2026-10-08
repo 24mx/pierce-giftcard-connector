@@ -152,10 +152,29 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     }
   }
 
+  /**
+   * Named in points (`redeemPoints`), the backend reserves exactly those points and prices them in the
+   * cart's currency, and that priced amount is what goes on the cart - the shopper is debited exactly
+   * what they picked. Named in an amount (`redeemAmount`, kept for callers that have not moved yet), the
+   * amount goes on the cart and the backend converts it back into points.
+   */
   async redeem(opts: { data: RedeemRequestDTO }): Promise<RedeemResponseDTO> {
-    const amount = opts.data.redeemAmount;
-    const denominations = this.decomposeOrRefuse(amount);
+    const { redeemAmount, redeemPoints } = opts.data;
+    if ((redeemAmount === undefined) === (redeemPoints === undefined)) {
+      throw new MockCustomError({
+        message: 'exactly one of redeemAmount and redeemPoints must be given',
+        code: 400,
+        key: 'InvalidRedeemRequest',
+      });
+    }
+    // Refused before anything is read or held: an amount the denominations cannot compose.
+    const requested = redeemAmount && { amount: redeemAmount, denominations: this.decomposeOrRefuse(redeemAmount) };
     let cart = await this.ctCartService.getCart({ id: getCartIdFromContext() });
+    if (!requested) {
+      // The points path learns its amount only from the hold, but a currency with no denominations at
+      // all can be refused now, before the ledger is touched.
+      this.levelsOrRefuse(cart.totalPrice.currencyCode);
+    }
     const userId = await this.getLoyaltyUserId(cart);
 
     // A previous redeem on this cart is replaced, never stacked: the backend allows one open hold per
@@ -176,7 +195,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
         userId,
         redemptionId,
         cartId: cart.id,
-        amount,
+        ...(requested ? { amount: requested.amount } : { points: redeemPoints, currencyCode: stillOwed.currencyCode }),
         cartTotal: { centAmount: stillOwed.centAmount, currencyCode: stillOwed.currencyCode },
         sessionExpiresAt: await this.currentSessionExpiry(),
       });
@@ -185,6 +204,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       // backend's sweep releases at TTL - never a discount without a hold.
       throw this.toConnectorError(e);
     }
+    const { amount, denominations } = requested ?? (await this.pricedOrVoid(hold, redemptionId));
 
     let baseline: Cart;
     let updated: Cart;
@@ -300,15 +320,45 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     });
   }
 
-  private decomposeOrRefuse(amount: AmountSchemaDTO): string[] {
-    const levels = getConfig().loyaltyDiscountLevelsByCurrency[amount.currencyCode];
+  /**
+   * The amount a points hold was priced at, decomposed. Nothing is on the cart yet, so a hold this
+   * connector cannot put on the cart is voided at once rather than released: there is no discount to
+   * take off first, and the points go straight back.
+   */
+  private async pricedOrVoid(
+    hold: LoyaltyHoldResponse,
+    redemptionId: string,
+  ): Promise<{ amount: AmountSchemaDTO; denominations: string[] }> {
+    if (!hold.amount) {
+      await this.voidQuietly(redemptionId, 'unpricedHold');
+      throw new MockCustomError({
+        message: 'the loyalty service did not price the points hold',
+        code: 500,
+        key: 'GenericError',
+      });
+    }
+    try {
+      return { amount: hold.amount, denominations: this.decomposeOrRefuse(hold.amount) };
+    } catch (e) {
+      await this.voidQuietly(redemptionId, 'amountNotDecomposable');
+      throw e;
+    }
+  }
+
+  private levelsOrRefuse(currencyCode: string): number {
+    const levels = getConfig().loyaltyDiscountLevelsByCurrency[currencyCode];
     if (!levels) {
       throw new MockCustomError({
-        message: `no loyalty denominations are configured for ${amount.currencyCode}`,
+        message: `no loyalty denominations are configured for ${currencyCode}`,
         code: 400,
         key: 'CurrencyNotMatch',
       });
     }
+    return levels;
+  }
+
+  private decomposeOrRefuse(amount: AmountSchemaDTO): string[] {
+    const levels = this.levelsOrRefuse(amount.currencyCode);
     try {
       return decompose(amount.centAmount, levels);
     } catch (e) {
@@ -392,6 +442,19 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       await LoyaltyAPI().release({ redemptionId });
     } catch (e) {
       log.error('Could not release the loyalty reservation: the backend sweep releases it later.', {
+        redemptionId,
+        action,
+        error: e instanceof LoyaltyApiError ? e.message : String(e),
+      });
+    }
+  }
+
+  /** Gives back a hold that never reached the cart. Best effort, like releaseQuietly: the sweep is the backstop. */
+  private async voidQuietly(redemptionId: string, action: string): Promise<void> {
+    try {
+      await LoyaltyAPI().voidHold({ redemptionId });
+    } catch (e) {
+      log.error('Could not void the loyalty reservation: the backend sweep releases it later.', {
         redemptionId,
         action,
         error: e instanceof LoyaltyApiError ? e.message : String(e),

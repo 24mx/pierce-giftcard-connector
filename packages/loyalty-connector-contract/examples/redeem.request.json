@@ -1,1 +1,1 @@
-{ "code": "points", "redeemAmount": { "centAmount": 2500, "currencyCode": "EUR" } }
+{ "code": "points", "redeemPoints": 2500 }

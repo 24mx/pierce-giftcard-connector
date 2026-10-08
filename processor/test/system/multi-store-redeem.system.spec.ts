@@ -41,7 +41,8 @@ describeSystem('redeeming in a specific store and currency', () => {
       expect(balance.status).toBe(200);
       const body = balance.body as { points: number; maxPoints: number; amount: { centAmount: number } };
       // centsPerPoint is the account-level conversion rate; maxPoints is the CART-aware cap (never more than
-      // this cart can actually absorb), already floored to a multiple of 100 by the backend.
+      // this cart can actually absorb). This is the caller-priced redeemAmount path, kept for storefronts
+      // that have not moved to redeemPoints (see redeem-points.system.spec.ts).
       const centsPerPoint = body.amount.centAmount / body.points;
       const pointsToRedeem = Math.min(100, body.maxPoints);
       expect(pointsToRedeem).toBeGreaterThan(0);

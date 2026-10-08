@@ -35,6 +35,29 @@ export const commercetools = (env: SystemEnv) => {
 
   const getCart = async (id: string): Promise<Cart> => (await api.carts().withId({ ID: id }).get().execute()).body;
 
+  /**
+   * The processor names the points owner by the cart's customer ACCOUNT and refuses a guest cart
+   * (CustomerNotIdentified), so every test cart belongs to a fresh customer with the test email.
+   */
+  const createCustomer = async (email: string): Promise<string> =>
+    (
+      await api
+        .customers()
+        .post({ body: { email, password: `System-${Math.random().toString(36).slice(2)}-1` } })
+        .execute()
+    ).body.customer.id;
+
+  const deleteCustomer = async (id: string): Promise<void> => {
+    try {
+      const { version } = (await api.customers().withId({ ID: id }).get().execute()).body;
+      await api.customers().withId({ ID: id }).delete({ queryArgs: { version } }).execute();
+    } catch (e) {
+      if (!isNotFound(e)) {
+        throw e;
+      }
+    }
+  };
+
   return {
     async createCart({
       email,
@@ -43,6 +66,7 @@ export const commercetools = (env: SystemEnv) => {
       currency = env.currency,
       country = env.country,
     }: CreateCartOptions): Promise<Cart> {
+      const customerId = await createCustomer(email);
       const path = storeKey
         ? `${apiUrl}/${projectKey}/in-store/key=${storeKey}/carts`
         : `${apiUrl}/${projectKey}/carts`;
@@ -53,6 +77,7 @@ export const commercetools = (env: SystemEnv) => {
           currency,
           country,
           customerEmail: email,
+          customerId,
           lineItems: [{ sku: env.sku, quantity: 1 }],
           shippingAddress: { country },
           ...(withStorefrontType && {
@@ -68,7 +93,10 @@ export const commercetools = (env: SystemEnv) => {
 
     getCart,
 
-    /** Best effort: a cart that is already gone (404) is the outcome wanted, not an error. */
+    /**
+     * Best effort: a cart that is already gone (404) is the outcome wanted, not an error. Takes the
+     * cart's customer with it, since createCart made one for this cart alone.
+     */
     async deleteCart(cart: Cart): Promise<void> {
       try {
         const fresh = await getCart(cart.id);
@@ -81,6 +109,9 @@ export const commercetools = (env: SystemEnv) => {
         if (!isNotFound(e)) {
           throw e;
         }
+      }
+      if (cart.customerId) {
+        await deleteCustomer(cart.customerId);
       }
     },
 

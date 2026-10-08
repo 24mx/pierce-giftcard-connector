@@ -66,8 +66,10 @@ export const loyaltyRedemptionRoutes = async (fastify: FastifyInstance, opts: Fa
           properties: {
             code: Type.String(),
             redeemAmount: AmountSchema,
+            redeemPoints: Type.Integer({ minimum: 1 }),
           },
-          required: ['code', 'redeemAmount'],
+          required: ['code'],
+          anyOf: [{ required: ['redeemAmount'] }, { required: ['redeemPoints'] }],
         },
         response: {
           200: RedeemResponseSchema,
