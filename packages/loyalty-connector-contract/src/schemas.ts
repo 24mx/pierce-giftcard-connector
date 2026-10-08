@@ -54,9 +54,14 @@ export const BalanceResponseSchema = Type.Object({
   openRedemptionLocked: Type.Union([Type.Boolean(), Type.Null()]),
 });
 
+// Exactly one of the two names the redemption. `redeemPoints` reserves exactly those points and lets the
+// loyalty backend price them in the cart's currency; `redeemAmount` is a caller-priced amount the backend
+// converts back into points, which can land a point off in a currency worth more than a EUR cent per
+// minor unit (GBP, CHF). Both present is a 400 InvalidRedeemRequest.
 export const RedeemRequestSchema = Type.Object({
   code: Type.String(),
-  redeemAmount: AmountSchema,
+  redeemAmount: Type.Optional(AmountSchema),
+  redeemPoints: Type.Optional(Type.Integer({ minimum: 1 })),
 });
 
 export const RedeemResponseSchema = Type.Object({

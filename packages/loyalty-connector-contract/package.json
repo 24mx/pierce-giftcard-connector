@@ -1,6 +1,6 @@
 {
   "name": "@24mx/loyalty-connector-contract",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Request/response schemas, error keys and examples of the Pierce loyalty gift card connector's storefront-facing routes (/balance, /redeem, /finalize, /release)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

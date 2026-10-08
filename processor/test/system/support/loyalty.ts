@@ -34,10 +34,14 @@ export const loyalty = (env: SystemEnv) => {
         body: JSON.stringify({ userId: email.toLowerCase() }),
       }),
 
-    /** One reconciliation pass now, narrowed to this customer's holds so nobody else's checkout is touched. */
+    /**
+     * One reconciliation pass now, narrowed to this customer's holds so nobody else's checkout is touched.
+     * `ignoreSessions`: the test's own checkout session is still live, and the sweep otherwise leaves a
+     * cart alone until that session (plus a grace) is over.
+     */
     sweepFor: (email: string, ttlMinutes = 0) =>
       call<void>(
-        `/loyalty/redemption/test-hooks/sweep?ttlMinutes=${ttlMinutes}&userId=${encodeURIComponent(email.toLowerCase())}`,
+        `/loyalty/redemption/test-hooks/sweep?ttlMinutes=${ttlMinutes}&ignoreSessions=true&userId=${encodeURIComponent(email.toLowerCase())}`,
         { method: 'POST' },
       ),
   };

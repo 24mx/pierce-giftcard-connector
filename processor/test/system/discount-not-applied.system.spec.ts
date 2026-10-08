@@ -59,7 +59,11 @@ describeSystem('a denomination discount that does not fire', () => {
     }
   });
 
-  test('redeem is 409 DiscountNotApplied, the hold is voided and the cart carries nothing', async () => {
+  /**
+   * The processor gives the hold back through /release, so - as for any release - the points stay reserved
+   * until the sweep (pierce-loyalty #64), although nothing ever reached the order.
+   */
+  test('redeem is 409 DiscountNotApplied, the cart carries nothing and the sweep gives the points back', async () => {
     const before = cart!.totalPrice.centAmount;
     const balanceBefore = (await backend.balance(email)).points;
 
@@ -73,6 +77,10 @@ describeSystem('a denomination discount that does not fire', () => {
     const after = await ct.getCart(cart!.id);
     expect(after.custom?.fields?.[REDEMPTION_ID_FIELD]).toBeUndefined();
     expect(after.totalPrice.centAmount).toBe(before);
+    expect((await backend.balance(email)).points).toBe(balanceBefore - AMOUNT_CENTS);
+
+    await backend.sweepFor(email);
+
     expect((await backend.balance(email)).points).toBe(balanceBefore);
     expect(await backend.releaseAll(email)).toEqual({ released: [], locked: [] });
   });

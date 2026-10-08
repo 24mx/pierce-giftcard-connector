@@ -103,6 +103,16 @@ describe('loyalty-redemption.route', () => {
     expect(built.calls).toStrictEqual([{ method: 'redeem', arg: { data: example('redeem.request') } }]);
   });
 
+  test('/redeem still accepts a caller-priced amount for a storefront that has not moved to points', async () => {
+    const built = await build({ redeem: async () => example('redeem.response') });
+    app = built.app;
+
+    const response = await post(app, '/redeem', example('redeem-amount.request'));
+
+    expect(response.statusCode).toBe(200);
+    expect(built.calls).toStrictEqual([{ method: 'redeem', arg: { data: example('redeem-amount.request') } }]);
+  });
+
   test('/balance hands the code to the service and answers with its result', async () => {
     const built = await build({ balance: async () => example('balance.response') });
     app = built.app;
@@ -133,6 +143,8 @@ describe('loyalty-redemption.route', () => {
     ['/redeem', { code: 'points' }],
     ['/redeem', { redeemAmount: { centAmount: 100, currencyCode: 'EUR' } }],
     ['/redeem', { code: 'points', redeemAmount: { centAmount: 100 } }],
+    ['/redeem', { code: 'points', redeemPoints: 0 }],
+    ['/redeem', { code: 'points', redeemPoints: 1.5 }],
     ['/finalize', {}],
     ['/release', {}],
   ])('%s refuses %j with a 400 that never reaches the service', async (url, body) => {

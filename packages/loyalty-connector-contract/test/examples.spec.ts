@@ -11,6 +11,7 @@ describe('examples validate against their schemas', () => {
     ['balance.request.json', contract.BalanceRequestSchema],
     ['balance.response.json', contract.BalanceResponseSchema],
     ['redeem.request.json', contract.RedeemRequestSchema],
+    ['redeem-amount.request.json', contract.RedeemRequestSchema],
     ['redeem.response.json', contract.RedeemResponseSchema],
     ['finalize.request.json', contract.FinalizeRequestSchema],
     ['finalize.response.json', contract.FinalizeResponseSchema],

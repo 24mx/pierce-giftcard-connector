@@ -718,6 +718,152 @@ describe('loyalty-redemption.service', () => {
     });
   });
 
+  describe('redeem in points', () => {
+    const redeemPoints = (points: number) => service.redeem({ data: { code: '', redeemPoints: points } });
+
+    /** Answers a points hold the way the backend prices it: `centsFor(points)` in the asked currency. */
+    const pointsHold = (centsFor: (points: number) => number, bodies: Record<string, unknown>[] = []) =>
+      http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
+        const body = (await request.json()) as { redemptionId: string; points: number; currencyCode: string };
+        bodies.push(body);
+        return HttpResponse.json({
+          redemptionId: body.redemptionId,
+          points: body.points,
+          balance: 0,
+          amount: { centAmount: centsFor(body.points), currencyCode: body.currencyCode },
+        });
+      });
+
+    test('holds the points in the cart currency and puts the amount the backend priced on the cart', async () => {
+      setupConfig({ loyaltyDiscountLevelsByCurrency: { EUR: 18, GBP: 18 } });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        totalPrice: { type: 'centPrecision', currencyCode: 'GBP', centAmount: 4999, fractionDigits: 2 },
+      });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultCartService.prototype, 'getPaymentAmount').mockResolvedValue({
+        centAmount: 4999,
+        currencyCode: 'GBP',
+        fractionDigits: 2,
+      });
+      const bodies: Record<string, unknown>[] = [];
+      // 0.85 GBP per EUR, rounded down: 7 points are 5 pence.
+      server.use(pointsHold((points) => Math.floor(points * 0.85), bodies));
+
+      const result = await redeemPoints(7);
+
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toMatchObject({
+        userId: 'demo@example.com',
+        cartId: cart.id,
+        points: 7,
+        currencyCode: 'GBP',
+        cartTotal: { centAmount: 4999, currencyCode: 'GBP' },
+      });
+      expect(bodies[0]).not.toHaveProperty('amount');
+      expect(cartFields.writes).toStrictEqual([{ redemptionId: bodies[0].redemptionId, denominations: ['D4', 'D1'] }]);
+      expect(result).toStrictEqual({
+        result: 'Success',
+        redemptionId: bodies[0].redemptionId,
+        points: 7,
+        appliedAmount: { centAmount: 5, currencyCode: 'GBP' },
+      });
+    });
+
+    test('refuses a request naming both the amount and the points before touching the ledger', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      const bodies: Record<string, unknown>[] = [];
+      server.use(pointsHold((points) => points, bodies));
+
+      await expect(
+        service.redeem({
+          data: { code: '', redeemPoints: 100, redeemAmount: { centAmount: 100, currencyCode: 'EUR' } },
+        }),
+      ).rejects.toMatchObject({ code: 'InvalidRedeemRequest', httpErrorStatus: 400 });
+      expect(bodies).toHaveLength(0);
+    });
+
+    test('refuses a cart currency with no configured denominations before touching the ledger', async () => {
+      setupConfig({ loyaltyDiscountLevelsByCurrency: { EUR: 18 } });
+      const cart = getCartWithCustomerEmail('demo@example.com', {
+        totalPrice: { type: 'centPrecision', currencyCode: 'PLN', centAmount: 100000, fractionDigits: 2 },
+      });
+      jest.spyOn(DefaultCartService.prototype, 'getCart').mockResolvedValue(cart);
+      jest.spyOn(DefaultCartService.prototype, 'getPaymentAmount').mockResolvedValue({
+        centAmount: 100000,
+        currencyCode: 'PLN',
+        fractionDigits: 2,
+      });
+      const bodies: Record<string, unknown>[] = [];
+      server.use(pointsHold((points) => points, bodies));
+
+      await expect(redeemPoints(100)).rejects.toMatchObject({ code: 'CurrencyNotMatch', httpErrorStatus: 400 });
+      expect(bodies).toHaveLength(0);
+    });
+
+    test('voids the hold and writes nothing when the priced amount cannot be composed', async () => {
+      setupConfig({ loyaltyDiscountLevelsByCurrency: { EUR: 4 } });
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      const voided: string[] = [];
+      server.use(
+        pointsHold((points) => points),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
+          const { redemptionId } = (await request.json()) as { redemptionId: string };
+          voided.push(redemptionId);
+          return HttpResponse.json({ redemptionId, points: 0, balance: 5000 });
+        }),
+      );
+
+      // 4 levels reach 15 minor units at most.
+      await expect(redeemPoints(16)).rejects.toMatchObject({ code: 'AmountNotDecomposable', httpErrorStatus: 400 });
+      expect(voided).toHaveLength(1);
+      expect(cartFields.writes).toHaveLength(0);
+    });
+
+    test('voids the hold and fails when the backend does not price points holds yet', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      const voided: string[] = [];
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
+          const body = (await request.json()) as { redemptionId: string };
+          return HttpResponse.json({ redemptionId: body.redemptionId, points: 100, balance: 0 });
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/void`, async ({ request }) => {
+          const { redemptionId } = (await request.json()) as { redemptionId: string };
+          voided.push(redemptionId);
+          return HttpResponse.json({ redemptionId, points: 0, balance: 5000 });
+        }),
+      );
+
+      await expect(redeemPoints(100)).rejects.toMatchObject({ code: 'GenericError', httpErrorStatus: 500 });
+      expect(voided).toHaveLength(1);
+      expect(cartFields.writes).toHaveLength(0);
+    });
+
+    test('releases the hold when commercetools applied less than the priced amount', async () => {
+      setupConfig();
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValue(getCartWithCustomerEmail('demo@example.com'));
+      const released: string[] = [];
+      server.use(
+        pointsHold((points) => points),
+        releaseRecorder(released),
+      );
+      cartFields.nextTotalAfterWrite = 4999 - 1000;
+
+      await expect(redeemPoints(2400)).rejects.toMatchObject({ code: 'DiscountNotApplied', httpErrorStatus: 409 });
+      expect(released).toHaveLength(1);
+    });
+  });
+
   describe('release', () => {
     test('releases through the backend and never touches the cart itself', async () => {
       setupConfig();

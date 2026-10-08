@@ -76,7 +76,12 @@ describeSystem('redeem → release → finalize against a deployed processor', (
     expect((await backend.balance(email)).points).toBe(balanceBefore - reply.body.points);
   });
 
-  test('release clears the fields, restores the total and credits the balance back', async () => {
+  /**
+   * The discount leaves the cart at once, but the points stay reserved until the cash check or the sweep
+   * closes the release (pierce-loyalty #64, RedemptionRelease.ReleaseMode.DEFER_CREDIT): a payment for the
+   * old amount may still complete in another tab.
+   */
+  test('release clears the fields and restores the total; the sweep then credits the balance back', async () => {
     const before = cart!.totalPrice.centAmount;
     const balanceBefore = (await backend.balance(email)).points;
     const redeemed = await redeem(redeemableCents());
@@ -91,6 +96,10 @@ describeSystem('redeem → release → finalize against a deployed processor', (
     expect(after.custom?.fields[REDEMPTION_ID_FIELD]).toBeUndefined();
     expect(after.custom?.fields[DENOMINATIONS_FIELD]).toBeUndefined();
     expect(after.totalPrice.centAmount).toBe(before);
+    expect((await backend.balance(email)).points).toBe(balanceBefore - redeemed.body.points);
+
+    await backend.sweepFor(email);
+
     expect((await backend.balance(email)).points).toBe(balanceBefore);
   });
 

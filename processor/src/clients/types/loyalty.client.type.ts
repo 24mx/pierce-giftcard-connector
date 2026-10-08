@@ -51,7 +51,11 @@ export type LoyaltyHoldRequest = {
   /** The UUID this connector minted for the redemption and writes onto the cart; the hold's idempotency key. */
   redemptionId: string;
   cartId: string;
-  amount: LoyaltyAmount;
+  /** A caller-priced amount the backend converts back into points. Exactly one of this and `points`. */
+  amount?: LoyaltyAmount;
+  /** Exactly these points, priced by the backend in `currencyCode` (returned as the response's `amount`). */
+  points?: number;
+  currencyCode?: string;
   /**
    * The cart total this reservation is measured against. The backend keeps EUR 1 of every order
    * payable by a non-points method and enforces that floor itself, so the rule no longer depends on
@@ -67,6 +71,8 @@ export type LoyaltyHoldResponse = {
   redemptionId: string;
   points: number;
   balance: number;
+  /** Set only for a hold named in points: the amount to put on the cart, rounded down by the backend. */
+  amount?: LoyaltyAmount;
 };
 
 export type LoyaltyVoidRequest = {
