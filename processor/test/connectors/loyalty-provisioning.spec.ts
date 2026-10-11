@@ -273,6 +273,38 @@ describe('loyalty-provisioning', () => {
     await expect(provisionLoyaltyRedemption(client(), OPTS, silent)).rejects.toThrow(/loyaltyRedemption.*Set/);
   });
 
+  test("raising a store's levels creates only the new denominations and leaves the existing ones as they are", async () => {
+    const created: Record<string, unknown>[] = [];
+    const updated: string[] = [];
+    const raisedOpts = { ...OPTS, stores: [{ storeKey: 'lu', currency: 'EUR', levels: 19 }] };
+    const existing = new Set(denominationKeys(18).map((k) => `loyalty-lu-${k}`));
+    server.use(
+      http.get(`${API}/${PROJECT}/types/key=${OPTS.typeKey}`, () => HttpResponse.json(convergedType())),
+      http.get(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) =>
+        existing.has(String(params.key)) ? HttpResponse.json(convergedDiscount(String(params.key))) : notFound(),
+      ),
+      http.post(`${API}/${PROJECT}/cart-discounts`, async ({ request }) => {
+        created.push((await request.json()) as Record<string, unknown>);
+        return HttpResponse.json({ id: 'd', version: 1 });
+      }),
+      http.post(`${API}/${PROJECT}/cart-discounts/key=:key`, ({ params }) => {
+        updated.push(String(params.key));
+        return HttpResponse.json({});
+      }),
+    );
+
+    await provisionLoyaltyRedemption(client(), raisedOpts, silent);
+
+    expect(created).toStrictEqual([
+      expect.objectContaining({
+        key: 'loyalty-lu-D262144',
+        value: { type: 'absolute', money: [{ currencyCode: 'EUR', centAmount: 262144 }] },
+        sortOrder: '0.00000101191',
+      }),
+    ]);
+    expect(updated).toStrictEqual([]);
+  });
+
   test('changes nothing when the project already matches', async () => {
     const posts: string[] = [];
     const singleStoreOpts = { ...OPTS, stores: [{ storeKey: 'lu', currency: 'EUR', levels: 18 }] };

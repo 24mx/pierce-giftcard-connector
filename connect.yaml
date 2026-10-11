@@ -61,9 +61,9 @@ deployAs:
           required: false
           default: loyalty-
         - key: LOYALTY_DISCOUNT_STORES
-          description: Comma-separated "storeKey:currency:levels" triples, one per commercetools Store that should get its own scoped set of denomination CartDiscounts (e.g. lu:EUR:18,ro:RON:21,se:SEK:22)
+          description: Comma-separated "storeKey:currency:levels" triples, one per commercetools Store that should get its own scoped set of denomination CartDiscounts (e.g. lu:EUR:19,ro:RON:22,se:SEK:23); each store's levels must reach the loyalty backend's per-order cap in its currency
           required: false
-          default: lu:EUR:18,ro:RON:21,se:SEK:22
+          default: lu:EUR:19,ro:RON:22,se:SEK:23
         - key: LOYALTY_DISCOUNT_SORT_ORDER_BASE
           description: Prefix of the denomination discounts' sortOrder (index appended); keep below every marketing promotion
           required: false

@@ -3,9 +3,17 @@ export type LoyaltyDiscountStore = { storeKey: string; currency: string; levels:
 /** decompose() works on 32-bit bitwise operations, so 31 binary denominations is the practical ceiling. */
 const MAX_LEVELS = 31;
 
+/**
+ * Sized so every store can apply the loyalty backend's per-order cap (EUR 5000, TASK-4) in its own
+ * currency: EUR 19 levels = EUR 5242.87; RON 22 = RON 41943.03 and SEK 23 = SEK 83886.07, which still
+ * cover the cap after the currency weakens 20% from its 2026-10 rate. denomination-capacity.spec.ts
+ * fails when a store falls short.
+ */
+export const DEFAULT_LOYALTY_DISCOUNT_STORES = 'lu:EUR:19,ro:RON:22,se:SEK:23';
+
 const invalid = (entry: string, why: string): Error =>
   new Error(
-    `LOYALTY_DISCOUNT_STORES entry "${entry}" is invalid: ${why}, expected "storeKey:currency:levels", e.g. "lu:EUR:18"`,
+    `LOYALTY_DISCOUNT_STORES entry "${entry}" is invalid: ${why}, expected "storeKey:currency:levels", e.g. "lu:EUR:19"`,
   );
 
 /**
@@ -74,12 +82,12 @@ export const config = {
   // scoped to that Store so each set lives inside the Store's own 100-active-automatic-discount budget
   // instead of the project-wide one (SUPPORT-41640 confirms the cap is project-wide + 100 per Store).
   // Format: "storeKey:currency:levels" comma-separated. `levels` is how many binary denominations that
-  // currency needs to reach the same real EUR-equivalent ceiling as EUR's 18 (a weaker currency against
-  // EUR needs more levels — see denominations.ts). Recompute `levels` if the currency's FX rate moves
-  // enough to matter; this is a provisioning-time constant, not something read live.
+  // currency needs to reach the backend's per-order cap (a weaker currency against EUR needs more levels
+  // — see denominations.ts and DEFAULT_LOYALTY_DISCOUNT_STORES). Recompute `levels` if the currency's FX
+  // rate moves beyond the headroom; this is a provisioning-time constant, not something read live.
   loyaltyDiscountKeyPrefix: process.env.LOYALTY_DISCOUNT_KEY_PREFIX || 'loyalty-',
   loyaltyDiscountStores: parseLoyaltyDiscountStores(
-    process.env.LOYALTY_DISCOUNT_STORES || 'lu:EUR:18,ro:RON:21,se:SEK:22',
+    process.env.LOYALTY_DISCOUNT_STORES || DEFAULT_LOYALTY_DISCOUNT_STORES,
   ),
   // Deliberately Math.max, not Math.min: if the same currency ever appears in two stores with
   // different level counts, decompose() must be told the LARGER level count so it never emits a
