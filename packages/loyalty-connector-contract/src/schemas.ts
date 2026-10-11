@@ -34,7 +34,7 @@ export const BalanceResponseSchema = Type.Object({
   status: StatusSchema,
   amount: AmountSchema,
   points: Type.Number(),
-  // The redemption id the cart's custom field already carries, if any - null otherwise. Lets a caller
+  // The redemption id the cart already carries, if any - null otherwise. Lets a caller
   // reconstruct "a redemption is active" state after losing it client-side (e.g. a page refresh
   // mid-checkout) without reading commercetools itself.
   openRedemptionId: Type.Union([Type.String(), Type.Null()]),
@@ -66,11 +66,11 @@ export const RedeemRequestSchema = Type.Object({
 
 export const RedeemResponseSchema = Type.Object({
   result: Type.String(),
-  // The UUID the connector minted and wrote onto the cart's loyaltyRedemptionId field - the hold's
+  // The UUID the connector minted and put on the cart - the hold's
   // key in the loyalty backend, and the id /finalize and /release take.
   redemptionId: Type.String(),
   points: Type.Number(),
-  // What commercetools actually took off the cart's gross total once the denominations were applied.
+  // What commercetools actually took off the cart's gross total once the redemption was on it.
   // Always equals the requested amount on a 200: anything else is a 409 DiscountNotApplied instead.
   appliedAmount: AmountSchema,
 });

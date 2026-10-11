@@ -1,13 +1,18 @@
 import { describe, expect, test } from '@jest/globals';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LOYALTY_ERROR_KEYS } from '../../../packages/loyalty-connector-contract/src';
 
-const SERVICE = join(__dirname, '../../src/services/loyalty-redemption.service.ts');
+const REDEMPTION = join(__dirname, '../../src/redemption');
+/** The service and the cart representation it delegates to: both answer the storefront's routes. */
+const SOURCES = [
+  join(__dirname, '../../src/services/loyalty-redemption.service.ts'),
+  ...readdirSync(REDEMPTION).map((file) => join(REDEMPTION, file)),
+];
 
-/** Every `key: 'X'` literal the service answers with, in source order, de-duplicated. */
+/** Every `key: 'X'` literal the service or the representation answers with, in source order, de-duplicated. */
 const keysUsedByService = (): string[] => {
-  const source = readFileSync(SERVICE, 'utf8');
+  const source = SOURCES.map((file) => readFileSync(file, 'utf8')).join('\n');
   return [...new Set([...source.matchAll(/key: '([A-Za-z]+)'/g)].map((m) => m[1]))];
 };
 

@@ -35,10 +35,9 @@ import { LoyaltyApiError } from '../errors/loyalty-api.error';
 import { getCartIdFromContext, getCtSessionIdFromContext } from '../libs/fastify/context/context';
 import { MockCustomError } from '../errors/mock-api.error';
 import { BalanceConverter } from './converters/balance-converter';
-import { CartRedemptionFieldsClient } from '../clients/cart-redemption-fields.client';
+import { CartRedemption } from '../redemption/cart-redemption';
 import { CustomerEmailClient } from '../clients/customer-email.client';
 import { SessionExpiryClient } from '../clients/session-expiry.client';
-import { decompose, sumDenominations } from './denominations';
 import packageJSON from '../../package.json';
 import { log } from '../libs/logger';
 
@@ -46,16 +45,16 @@ export type LoyaltyRedemptionServiceOptions = {
   ctCartService: CommercetoolsCartService;
   ctPaymentService: CommercetoolsPaymentService;
   ctOrderService: CommercetoolsOrderService;
-  cartFields: CartRedemptionFieldsClient;
+  cartRedemption: CartRedemption;
   customers: CustomerEmailClient;
   sessions: SessionExpiryClient;
 };
 
 /**
  * Spends loyalty points as a cart discount. A redemption is a hold in the loyalty backend (which debits
- * the points at once) plus two custom fields on the cart - the redemption id and the discount
- * denominations - that make commercetools apply the matching automatic CartDiscounts. No Payment is
- * created: the card leg covers whatever the discounted cart still asks for.
+ * the points at once) plus its representation on the cart ({@link CartRedemption}), which makes
+ * commercetools take the amount off. No Payment is created: the card leg covers whatever the
+ * discounted cart still asks for.
  *
  * Order matters in redeem(): hold first, cart second. A hold whose cart write failed costs the customer
  * their points until the void here (or the backend's sweep) gives them back - recoverable. A cart
@@ -63,14 +62,14 @@ export type LoyaltyRedemptionServiceOptions = {
  * the backend's coverage audit exists to catch.
  */
 export class LoyaltyRedemptionService extends AbstractGiftCardService {
-  private readonly cartFields: CartRedemptionFieldsClient;
+  private readonly cartRedemption: CartRedemption;
   private readonly customers: CustomerEmailClient;
   private readonly sessions: SessionExpiryClient;
   private readonly balanceConverter = new BalanceConverter();
 
   constructor(opts: LoyaltyRedemptionServiceOptions) {
     super(opts.ctCartService, opts.ctPaymentService, opts.ctOrderService);
-    this.cartFields = opts.cartFields;
+    this.cartRedemption = opts.cartRedemption;
     this.customers = opts.customers;
     this.sessions = opts.sessions;
   }
@@ -126,9 +125,8 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
   async balance(_code: string): Promise<BalanceResponseSchemaDTO> {
     const cart = await this.ctCartService.getCart({ id: getCartIdFromContext() });
     const userId = await this.getLoyaltyUserId(cart);
-    const carried = this.cartFields.read(cart);
     const stillOwed = await this.ctCartService.getPaymentAmount({ cart });
-    const undiscounted = stillOwed.centAmount + sumDenominations(carried.denominations);
+    const undiscounted = stillOwed.centAmount + this.cartRedemption.amountOn(cart);
     try {
       const result = await LoyaltyAPI().balance({
         userId,
@@ -146,7 +144,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
           key: 'GenericError',
         });
       }
-      return this.balanceConverter.convert(result, carried.redemptionId, result.cap);
+      return this.balanceConverter.convert(result, this.cartRedemption.carriedBy(cart), result.cap);
     } catch (e) {
       throw this.toConnectorError(e);
     }
@@ -167,13 +165,15 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
         key: 'InvalidRedeemRequest',
       });
     }
-    // Refused before anything is read or held: an amount the denominations cannot compose.
-    const requested = redeemAmount && { amount: redeemAmount, denominations: this.decomposeOrRefuse(redeemAmount) };
+    // Refused before anything is read or held: an amount the cart representation cannot carry.
+    if (redeemAmount) {
+      this.cartRedemption.assertApplicable(redeemAmount);
+    }
     let cart = await this.ctCartService.getCart({ id: getCartIdFromContext() });
-    if (!requested) {
-      // The points path learns its amount only from the hold, but a currency with no denominations at
-      // all can be refused now, before the ledger is touched.
-      this.levelsOrRefuse(cart.totalPrice.currencyCode);
+    if (!redeemAmount) {
+      // The points path learns its amount only from the hold, but a currency the representation cannot
+      // carry at all can be refused now, before the ledger is touched.
+      this.cartRedemption.assertCurrency(cart.totalPrice.currencyCode);
     }
     const userId = await this.getLoyaltyUserId(cart);
 
@@ -181,9 +181,9 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     // cart, and the field can only hold one redemption anyway. The backend releases it (discount off
     // the cart first, points back only then; a lock aborts before anything moved), and the cart is
     // read again so the floor below is measured undiscounted.
-    const carried = this.cartFields.read(cart);
-    if (carried.redemptionId) {
-      await this.releaseOrAbort(carried.redemptionId);
+    const carried = this.cartRedemption.carriedBy(cart);
+    if (carried) {
+      await this.releaseOrAbort(carried);
       cart = await this.ctCartService.getCart({ id: cart.id });
     }
 
@@ -195,7 +195,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
         userId,
         redemptionId,
         cartId: cart.id,
-        ...(requested ? { amount: requested.amount } : { points: redeemPoints, currencyCode: stillOwed.currencyCode }),
+        ...(redeemAmount ? { amount: redeemAmount } : { points: redeemPoints, currencyCode: stillOwed.currencyCode }),
         cartTotal: { centAmount: stillOwed.centAmount, currencyCode: stillOwed.currencyCode },
         sessionExpiresAt: await this.currentSessionExpiry(),
       });
@@ -204,12 +204,11 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       // backend's sweep releases at TTL - never a discount without a hold.
       throw this.toConnectorError(e);
     }
-    const { amount, denominations } = requested ?? (await this.pricedOrVoid(hold, redemptionId));
+    const amount = redeemAmount ?? (await this.pricedOrVoid(hold, redemptionId));
 
-    let baseline: Cart;
-    let updated: Cart;
+    let applied: number;
     try {
-      ({ baseline, updated } = await this.cartFields.write(cart, { redemptionId, denominations }));
+      applied = await this.cartRedemption.apply(cart, redemptionId, amount);
     } catch (e) {
       // The write may have reached commercetools before the failure surfaced, so only the backend's
       // clear-first release is safe here.
@@ -217,13 +216,10 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       throw e;
     }
 
-    // Measured against the cart the write was really applied to: a version-conflict retry re-reads
-    // the cart, and a concurrent line change must not masquerade as a discount that did not apply.
-    const applied = grossTotal(baseline) - grossTotal(updated);
     if (applied !== amount.centAmount) {
-      // A stopping promotion above the loyalty discounts, a currency the denominations are not
-      // provisioned in, or a cart too small for the amount: commercetools did not do what the hold
-      // assumed, so undo both sides rather than leave points spent against a partial discount.
+      // A stopping promotion above the loyalty discount, a currency the representation is not set up
+      // in, or a cart too small for the amount: commercetools did not do what the hold assumed, so undo
+      // both sides rather than leave points spent against a partial discount.
       await this.releaseQuietly(redemptionId, 'discountNotApplied');
       throw new MockCustomError({
         message: `commercetools applied ${applied} of the requested ${amount.centAmount} ${amount.currencyCode}`,
@@ -248,7 +244,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
    */
   async release(opts: { data: ReleaseRequestDTO }): Promise<ReleaseResponseDTO> {
     const cart = await this.ctCartService.getCart({ id: getCartIdFromContext() });
-    if (this.cartFields.read(cart).redemptionId !== opts.data.redemptionId) {
+    if (this.cartRedemption.carriedBy(cart) !== opts.data.redemptionId) {
       throw new MockCustomError({
         message: 'this cart does not carry the given redemption',
         code: 404,
@@ -263,7 +259,7 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       }
       // The backend holds nothing for this discount, so there are no points to give back: taking the
       // discount off is all that is left, and it cannot hand anything away.
-      await this.cartFields.clear(cart, opts.data.redemptionId);
+      await this.cartRedemption.clear(cart, opts.data.redemptionId);
     }
     return { result: 'Success' };
   }
@@ -321,14 +317,11 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
   }
 
   /**
-   * The amount a points hold was priced at, decomposed. Nothing is on the cart yet, so a hold this
-   * connector cannot put on the cart is voided at once rather than released: there is no discount to
-   * take off first, and the points go straight back.
+   * The amount a points hold was priced at, checked against the cart representation. Nothing is on the
+   * cart yet, so a hold this connector cannot put on the cart is voided at once rather than released:
+   * there is no discount to take off first, and the points go straight back.
    */
-  private async pricedOrVoid(
-    hold: LoyaltyHoldResponse,
-    redemptionId: string,
-  ): Promise<{ amount: AmountSchemaDTO; denominations: string[] }> {
+  private async pricedOrVoid(hold: LoyaltyHoldResponse, redemptionId: string): Promise<AmountSchemaDTO> {
     if (!hold.amount) {
       await this.voidQuietly(redemptionId, 'unpricedHold');
       throw new MockCustomError({
@@ -338,35 +331,11 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
       });
     }
     try {
-      return { amount: hold.amount, denominations: this.decomposeOrRefuse(hold.amount) };
+      this.cartRedemption.assertApplicable(hold.amount);
+      return hold.amount;
     } catch (e) {
       await this.voidQuietly(redemptionId, 'amountNotDecomposable');
       throw e;
-    }
-  }
-
-  private levelsOrRefuse(currencyCode: string): number {
-    const levels = getConfig().loyaltyDiscountLevelsByCurrency[currencyCode];
-    if (!levels) {
-      throw new MockCustomError({
-        message: `no loyalty denominations are configured for ${currencyCode}`,
-        code: 400,
-        key: 'CurrencyNotMatch',
-      });
-    }
-    return levels;
-  }
-
-  private decomposeOrRefuse(amount: AmountSchemaDTO): string[] {
-    const levels = this.levelsOrRefuse(amount.currencyCode);
-    try {
-      return decompose(amount.centAmount, levels);
-    } catch (e) {
-      throw new MockCustomError({
-        message: e instanceof Error ? e.message : String(e),
-        code: 400,
-        key: 'AmountNotDecomposable',
-      });
     }
   }
 
@@ -500,6 +469,3 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     }
   }
 }
-
-/** The figure a checkout compares against: gross incl. tax when commercetools has resolved it. */
-const grossTotal = (cart: Cart): number => cart.taxedPrice?.totalGross.centAmount ?? cart.totalPrice.centAmount;

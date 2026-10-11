@@ -11,16 +11,16 @@ export const LOYALTY_ERROR_KEYS = [
   'InsufficientFunds',
   /**
    * Two cases share this key: (a) redeemAmount.currencyCode differs from the cart's currency, and
-   * (b) the cart's currency has no denomination levels configured at all — a server misconfiguration
-   * (that currency is missing from LOYALTY_DISCOUNT_STORES), not something the shopper can fix.
+   * (b) the connector is not set up to put points on carts in the cart's currency at all — a server
+   * misconfiguration, not something the shopper can fix.
    */
   'CurrencyNotMatch',
   /** A concurrent redeem on the same cart won; re-quote (the balance reports the open redemption). */
   'CartAlreadyHeld',
   /**
-   * The amount exceeds what the denomination discounts can compose. The ceiling is currency-dependent:
-   * it is 2^levels - 1 minor units, where `levels` is the number of binary denominations provisioned
-   * for that currency's Store (configured per Store in LOYALTY_DISCOUNT_STORES).
+   * The amount is more than the connector can put on a cart in that currency (a per-currency ceiling
+   * of the connector's set-up, at least the loyalty backend's per-order cap). The key's name is kept
+   * for compatibility; it does not imply how points are carried on the cart.
    */
   'AmountNotDecomposable',
   /** commercetools did not take the amount off the cart; the hold was voided, nothing was kept. */

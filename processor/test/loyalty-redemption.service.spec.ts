@@ -13,6 +13,7 @@ import {
   CartRedemptionWriteResult,
 } from '../src/clients/cart-redemption-fields.client';
 import { MockCustomError } from '../src/errors/mock-api.error';
+import { DenominationCartRedemption } from '../src/redemption/denomination-cart-redemption';
 import { CustomerEmailClient } from '../src/clients/customer-email.client';
 import { SessionExpiryClient } from '../src/clients/session-expiry.client';
 import { cartCarryingRedemption, customerIdFor, getCartOK, getCartWithCustomerEmail } from './mocks/coco';
@@ -22,7 +23,8 @@ const LOYALTY_URL = 'https://loyalty.test';
 const denominationCents = (keys: readonly string[]) => keys.reduce((sum, key) => sum + Number(key.slice(1)), 0);
 
 /**
- * In-memory stand-in for the cart fields client. `nextTotalAfterWrite` is what the "cart" totals once
+ * The service runs here on the denomination representation, over an in-memory stand-in for the cart
+ * fields client - what the storefront really gets. In-memory stand-in for the cart fields client. `nextTotalAfterWrite` is what the "cart" totals once
  * the denominations are on it - the service reads that drop as proof commercetools applied the discount.
  */
 class FakeCartFields implements CartRedemptionFieldsClient {
@@ -163,7 +165,7 @@ describe('loyalty-redemption.service', () => {
       ctCartService: paymentSDK.ctCartService,
       ctPaymentService: paymentSDK.ctPaymentService,
       ctOrderService: paymentSDK.ctOrderService,
-      cartFields,
+      cartRedemption: new DenominationCartRedemption(cartFields, async () => undefined),
       customers,
       sessions,
     });
