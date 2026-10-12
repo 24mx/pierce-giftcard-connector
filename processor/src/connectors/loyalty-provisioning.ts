@@ -8,7 +8,14 @@ import {
   TypeUpdateAction,
 } from '@commercetools/platform-sdk';
 import { ByProjectKeyRequestBuilder } from '@commercetools/platform-sdk/dist/declarations/src/generated/client/by-project-key-request-builder';
-import { denominationKeys, denominationMinorUnits } from '../services/denominations';
+import {
+  denominationCartPredicate,
+  denominationDiscountKey,
+  denominationDiscountName,
+  denominationKeys,
+  denominationMinorUnits,
+  denominationSortOrder,
+} from '../services/denominations';
 
 export type ProvisioningStore = {
   storeKey: string;
@@ -141,18 +148,18 @@ async function ensureDenominationDiscount(
   index: number,
   logger: Logger,
 ): Promise<void> {
-  const key = `${opts.discountKeyPrefix}${store.storeKey}-${denomination}`;
+  const key = denominationDiscountKey(opts.discountKeyPrefix, store.storeKey, denomination);
   const cents = denominationMinorUnits(denomination);
   const value: CartDiscountValueAbsoluteDraft = {
     type: 'absolute',
     money: [{ currencyCode: store.currency, centAmount: cents }],
   };
-  const sortOrder = `${opts.sortOrderBase}${String(storeIndex + 1).padStart(2, '0')}${String(index + 1).padStart(2, '0')}1`;
+  const sortOrder = denominationSortOrder(opts.sortOrderBase, storeIndex, index);
   const draft: CartDiscountDraft = {
     key,
-    name: { en: `Loyalty points ${store.storeKey} ${denomination}` },
+    name: { en: denominationDiscountName(store.storeKey, denomination) },
     value,
-    cartPredicate: `custom.${opts.denominationsField} contains "${denomination}"`,
+    cartPredicate: denominationCartPredicate(opts.denominationsField, denomination),
     target: { type: 'totalPrice' },
     sortOrder,
     isActive: true,

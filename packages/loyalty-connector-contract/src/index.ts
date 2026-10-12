@@ -3,6 +3,7 @@ import * as schemas from './schemas';
 
 export * from './schemas';
 export * from './error-keys';
+export * from './denominations';
 
 export type Amount = Static<typeof schemas.AmountSchema>;
 export type ErrorResponse = Static<typeof schemas.ErrorResponseSchema>;
