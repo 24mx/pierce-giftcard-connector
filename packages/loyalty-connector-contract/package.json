@@ -33,6 +33,7 @@
     "typescript": "6.0.3"
   },
   "overrides": {
-    "argparse@1": "2.0.1"
+    "argparse@1": "2.0.1",
+    "handlebars": "4.7.10"
   }
 }

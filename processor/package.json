@@ -44,7 +44,8 @@
     "brace-expansion@2": "2.1.7",
     "brace-expansion@3": "3.0.9",
     "brace-expansion@5": "5.0.12",
-    "argparse@1": "2.0.1"
+    "argparse@1": "2.0.1",
+    "handlebars": "4.7.10"
   },
   "devDependencies": {
     "@commercetools/ts-client": "5.0.3",
