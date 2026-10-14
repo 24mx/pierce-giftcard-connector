@@ -549,6 +549,40 @@ describe('loyalty-redemption.service', () => {
       expect(holdBody.redemptionId).not.toBe('red-old');
     });
 
+    /**
+     * The backend holds nothing for the redemption the cart carries (a dev backend restarted on an empty
+     * database, say): there are no points to give back, so the stale discount is taken off the cart, as the
+     * remove path does, and the new hold goes ahead instead of the apply failing with a 500.
+     */
+    test('clears a carried redemption the backend knows nothing of and holds the new amount', async () => {
+      setupConfig();
+      const carrying = cartCarryingRedemption('demo@example.com', 'red-gone', ['D1024'], 3975);
+      const cleared = getCartWithCustomerEmail('demo@example.com', { id: carrying.id, version: carrying.version + 1 });
+      jest
+        .spyOn(DefaultCartService.prototype, 'getCart')
+        .mockResolvedValueOnce(carrying)
+        .mockResolvedValueOnce(cleared);
+      const calls: string[] = [];
+      let holdBody: Record<string, unknown> = {};
+      server.use(
+        http.post(`${LOYALTY_URL}/loyalty/redemption/release`, () => {
+          calls.push('release');
+          return HttpResponse.json({ error: 'no such hold' }, { status: 404 });
+        }),
+        http.post(`${LOYALTY_URL}/loyalty/redemption/hold`, async ({ request }) => {
+          holdBody = (await request.json()) as Record<string, unknown>;
+          calls.push('hold');
+          return HttpResponse.json({ redemptionId: holdBody.redemptionId, points: 2400, balance: 200 });
+        }),
+      );
+
+      await redeem(2400);
+
+      expect(calls).toStrictEqual(['release', 'hold']);
+      expect(cartFields.clears).toBe(1);
+      expect(holdBody.cartTotal).toStrictEqual({ centAmount: 4999, currencyCode: 'EUR' });
+    });
+
     test('aborts when the redemption already on the cart is locked for finalization', async () => {
       setupConfig();
       jest

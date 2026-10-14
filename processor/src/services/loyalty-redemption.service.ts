@@ -183,7 +183,16 @@ export class LoyaltyRedemptionService extends AbstractGiftCardService {
     // read again so the floor below is measured undiscounted.
     const carried = this.cartRedemption.carriedBy(cart);
     if (carried) {
-      await this.releaseOrAbort(carried);
+      try {
+        await this.releaseOrAbort(carried);
+      } catch (e) {
+        if (!(e instanceof LoyaltyApiError && e.status === 404)) {
+          throw e;
+        }
+        // The backend holds nothing for the carried discount (as on remove): there are no points to give
+        // back, so taking the stale discount off is all that is left before the new hold.
+        await this.cartRedemption.clear(cart, carried);
+      }
       cart = await this.ctCartService.getCart({ id: cart.id });
     }
 
